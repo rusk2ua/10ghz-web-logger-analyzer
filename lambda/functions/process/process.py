@@ -38,7 +38,7 @@ def parse_multipart_data(event):
         'inputType': 'files',
         'contestYear': 2024,
         'stationCategory': 'FIXED',
-        'outputs': ['summary']  # Default to just summary for testing
+        'outputs': ['summary', 'station_report', 'weekend_analysis', 'comprehensive_analysis', 'directional_viz']  # All outputs for testing
     }
     
     # Return sample file content with proper Cabrillo headers
@@ -281,15 +281,12 @@ END-OF-LOG:"""
                         Bucket=FILES_BUCKET,
                         Key=s3_key,
                         Body=f.read(),
-                        ContentDisposition=f'attachment; filename="{filename}"'
+                        ContentDisposition=f'attachment; filename="{filename}"',
+                        ContentType='text/plain'
                     )
                 
-                # Generate presigned URL (valid for 24 hours)
-                url = s3_client.generate_presigned_url(
-                    'get_object',
-                    Params={'Bucket': FILES_BUCKET, 'Key': s3_key},
-                    ExpiresIn=86400  # 24 hours
-                )
+                # Use direct S3 URL since bucket is public
+                url = f"https://{FILES_BUCKET}.s3.us-east-2.amazonaws.com/{s3_key}"
                 
                 download_urls.append({
                     'name': filename,

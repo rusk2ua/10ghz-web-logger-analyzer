@@ -24,6 +24,8 @@ export class Arrl10GhzWebStack extends cdk.Stack {
     // S3 bucket for temporary file storage
     const filesBucket = new s3.Bucket(this, 'FilesBucket', {
       bucketName: `arrl-10ghz-files-${this.account}-${this.region}`,
+      publicReadAccess: true,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ACLS,
       lifecycleRules: [{
         id: 'DeleteAfter1Day',
         expiration: cdk.Duration.days(1),
