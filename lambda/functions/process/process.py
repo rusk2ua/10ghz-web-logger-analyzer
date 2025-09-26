@@ -9,14 +9,68 @@ from io import StringIO
 import math
 from collections import defaultdict
 
-# Import heavy dependencies only when needed
-def import_heavy_deps():
-    global pd, plt, np
-    import pandas as pd
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    import numpy as np
+# Simple CSV parsing without pandas for now
+def parse_csv_data(csv_text):
+    """Parse CSV data without pandas"""
+    lines = csv_text.strip().split('\n')
+    if not lines:
+        return []
+    
+    headers = [h.strip().lower() for h in lines[0].split(',')]
+    data = []
+    
+    for line in lines[1:]:
+        if line.strip():
+            values = [v.strip() for v in line.split(',')]
+            if len(values) >= len(headers):
+                row = dict(zip(headers, values))
+                data.append(row)
+    
+    return data
+
+def parse_multipart_data(event):
+    """Parse multipart form data from Lambda event"""
+    import base64
+    
+    # For now, return sample data since multipart parsing is complex
+    # In production, you'd use a proper multipart parser
+    contest_data = {
+        'inputType': 'files',
+        'callsign': 'SAMPLE',
+        'contestYear': 2024,
+        'operatorCategory': 'SINGLE-OP',
+        'stationCategory': 'FIXED',
+        'gridSquare': 'FN20xx',
+        'outputs': ['cabrillo', 'summary']
+    }
+    
+    # Return sample file content
+    file_data = """QSO: 10GHz PH 20240817 1400 SAMPLE FN20xx W1ABC FN20aa
+QSO: 24GHz PH 20240817 1430 SAMPLE FN20xx K2DEF FN30bb
+QSO: 10GHz PH 20240818 0900 SAMPLE FN20xx N3GHI FN21cc"""
+    
+    return contest_data, file_data
+
+def parse_cabrillo_file_content(file_content):
+    """Parse Cabrillo file content into data structure"""
+    data = []
+    lines = file_content.strip().split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        if line.startswith('QSO:'):
+            parts = line.split()
+            if len(parts) >= 8:
+                data.append({
+                    'date': parts[3],
+                    'time': parts[4],
+                    'band': parts[1],
+                    'sourcegrid': parts[6],
+                    'call': parts[7],
+                    'grid': parts[8] if len(parts) > 8 else ''
+                })
+    
+    return data
 
 s3_client = boto3.client('s3')
 FILES_BUCKET = os.environ['FILES_BUCKET']
@@ -35,31 +89,28 @@ def handler(event, context):
                 'body': ''
             }
         
-        # Parse the request - handle both JSON and FormData
-        if event.get('isBase64Encoded'):
-            # Handle multipart form data (file uploads)
-            import base64
-            body_bytes = base64.b64decode(event['body'])
-            # For now, use sample data for file uploads
-            contest_data = {
-                'inputType': 'files',
-                'callsign': 'SAMPLE',
-                'contestYear': 2024,
-                'operatorCategory': 'SINGLE-OP',
-                'stationCategory': 'FIXED',
-                'gridSquare': 'FN20xx',
-                'outputs': ['cabrillo', 'summary']
-            }
-            df = create_sample_data()
+        # Parse the request
+        content_type = event.get('headers', {}).get('content-type', '').lower()
+        
+        if 'multipart/form-data' in content_type:
+            # Handle file uploads
+            contest_data, file_data = parse_multipart_data(event)
+            if file_data:
+                data = parse_cabrillo_file_content(file_data)
+            else:
+                data = create_sample_data()
         else:
             # Handle JSON data (Google Sheets)
-            body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
-            contest_data = json.loads(body.get('contestData', '{}'))
-            
-            if contest_data.get('inputType') == 'sheets':
-                df = get_sheet_data(contest_data['sheetsUrl'])
-            else:
-                df = create_sample_data()
+            try:
+                body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
+                contest_data = json.loads(body.get('contestData', '{}'))
+                
+                if contest_data.get('inputType') == 'sheets':
+                    data = get_sheet_data(contest_data['sheetsUrl'])
+                else:
+                    data = create_sample_data()
+            except (json.JSONDecodeError, KeyError) as e:
+                raise Exception(f"Invalid request format: {str(e)}")
         
         # Create temporary directory for processing
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -70,9 +121,10 @@ def handler(event, context):
             year = contest_data['contestYear']
             
             # Get the latest contest date from the data
-            if not df.empty and 'date' in df.columns:
-                latest_date = df['date'].max()
-                date_str = latest_date if isinstance(latest_date, str) else latest_date.strftime('%Y-%m-%d')
+            if data and any('date' in row for row in data):
+                dates = [row.get('date', '') for row in data if row.get('date')]
+                latest_date = max(dates) if dates else f"{year}-01-01"
+                date_str = latest_date
             else:
                 date_str = f"{year}-01-01"
             
@@ -80,37 +132,37 @@ def handler(event, context):
                 if output_type == 'cabrillo':
                     filename = f"{callsign}_ARRL_10GHZ_{date_str}.log"
                     filepath = os.path.join(temp_dir, filename)
-                    generate_cabrillo(df, contest_data, filepath)
+                    generate_cabrillo(data, contest_data, filepath)
                     output_files.append((filepath, filename))
                 
                 elif output_type == 'summary':
                     filename = f"{callsign}_Summary_{date_str}.txt"
                     filepath = os.path.join(temp_dir, filename)
-                    generate_summary(df, contest_data, filepath)
+                    generate_summary(data, contest_data, filepath)
                     output_files.append((filepath, filename))
                 
                 elif output_type == 'station_report':
                     filename = f"{callsign}_Station_Report_{date_str}.txt"
                     filepath = os.path.join(temp_dir, filename)
-                    generate_station_report(df, contest_data, filepath)
+                    generate_station_report(data, contest_data, filepath)
                     output_files.append((filepath, filename))
                 
                 elif output_type == 'weekend_analysis':
                     filename = f"{callsign}_Weekend_Analysis_{date_str}.txt"
                     filepath = os.path.join(temp_dir, filename)
-                    generate_weekend_analysis(df, contest_data, filepath)
+                    generate_weekend_analysis(data, contest_data, filepath)
                     output_files.append((filepath, filename))
                 
                 elif output_type == 'comprehensive_analysis':
                     filename = f"{callsign}_Comprehensive_Analysis_{date_str}.txt"
                     filepath = os.path.join(temp_dir, filename)
-                    generate_comprehensive_analysis(df, contest_data, filepath)
+                    generate_comprehensive_analysis(data, contest_data, filepath)
                     output_files.append((filepath, filename))
                 
                 elif output_type == 'directional_viz':
-                    filename = f"{callsign}_Directional_Viz_{date_str}.png"
+                    filename = f"{callsign}_Directional_Viz_{date_str}.txt"
                     filepath = os.path.join(temp_dir, filename)
-                    generate_directional_visualization(df, contest_data, filepath)
+                    generate_directional_analysis(data, contest_data, filepath)
                     output_files.append((filepath, filename))
             
             # Upload files to S3 and generate download URLs
@@ -165,26 +217,20 @@ def handler(event, context):
 
 def create_sample_data():
     """Create sample contest data for demonstration"""
-    import_heavy_deps()
-    data = {
-        'date': ['2024-08-17', '2024-08-17', '2024-08-18'],
-        'time': ['1400', '1430', '0900'],
-        'call': ['W1ABC', 'K2DEF', 'N3GHI'],
-        'band': ['10GHz', '24GHz', '10GHz'],
-        'grid': ['FN20aa', 'FN30bb', 'FN21cc'],
-        'sourcegrid': ['FN20xx', 'FN20xx', 'FN20xx']
-    }
-    return pd.DataFrame(data)
+    return [
+        {'date': '2024-08-17', 'time': '1400', 'call': 'W1ABC', 'band': '10GHz', 'grid': 'FN20aa', 'sourcegrid': 'FN20xx'},
+        {'date': '2024-08-17', 'time': '1430', 'call': 'K2DEF', 'band': '24GHz', 'grid': 'FN30bb', 'sourcegrid': 'FN20xx'},
+        {'date': '2024-08-18', 'time': '0900', 'call': 'N3GHI', 'band': '10GHz', 'grid': 'FN21cc', 'sourcegrid': 'FN20xx'}
+    ]
 
 def get_sheet_data(sheet_url):
     """Convert Google Sheets URL to CSV export URL and fetch data"""
     try:
-        import_heavy_deps()
         sheet_id = sheet_url.split('/d/')[1].split('/')[0]
         csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
         response = requests.get(csv_url, timeout=30)
         response.raise_for_status()
-        return pd.read_csv(StringIO(response.text))
+        return parse_csv_data(response.text)
     except Exception as e:
         raise Exception(f"Failed to fetch Google Sheets data: {str(e)}")
 
@@ -238,7 +284,7 @@ def get_band_multiplier(band):
     }
     return multipliers.get(normalize_band(band), 1)
 
-def generate_cabrillo(df, contest_data, filepath):
+def generate_cabrillo(data, contest_data, filepath):
     """Generate Cabrillo format log file"""
     with open(filepath, 'w') as f:
         f.write("START-OF-LOG: 3.0\n")
@@ -254,152 +300,178 @@ def generate_cabrillo(df, contest_data, filepath):
         f.write(f"CLAIMED-SCORE: 0\n")  # Will be calculated
         
         # QSO lines
-        for _, row in df.iterrows():
-            band = normalize_band(row['band'])
-            date = row['date'].replace('-', '') if isinstance(row['date'], str) else row['date'].strftime('%Y%m%d')
-            time = str(row['time']).zfill(4)
+        for row in data:
+            band = normalize_band(row.get('band', ''))
+            date = row.get('date', '').replace('-', '')
+            time = str(row.get('time', '')).zfill(4)
             
             f.write(f"QSO: {band} PH {date} {time} {contest_data['callsign']} "
-                   f"{contest_data['gridSquare']} {row['call']} {row['grid']}\n")
+                   f"{contest_data['gridSquare']} {row.get('call', '')} {row.get('grid', '')}\n")
         
         f.write("END-OF-LOG:\n")
 
-def generate_summary(df, contest_data, filepath):
+def generate_summary(data, contest_data, filepath):
     """Generate contest summary report"""
     with open(filepath, 'w') as f:
         f.write(f"ARRL 10 GHz Contest Summary - {contest_data['callsign']}\n")
         f.write("=" * 50 + "\n\n")
         
-        total_qsos = len(df)
-        unique_calls = df['call'].nunique() if not df.empty else 0
-        bands_worked = df['band'].nunique() if not df.empty else 0
+        total_qsos = len(data)
+        unique_calls = len(set(row.get('call', '') for row in data))
+        bands_worked = len(set(row.get('band', '') for row in data))
         
         f.write(f"Total QSOs: {total_qsos}\n")
         f.write(f"Unique Callsigns: {unique_calls}\n")
         f.write(f"Bands Worked: {bands_worked}\n\n")
         
-        if not df.empty:
+        if data:
             f.write("QSOs by Band:\n")
-            band_counts = df['band'].value_counts()
+            band_counts = {}
+            for row in data:
+                band = row.get('band', '')
+                band_counts[band] = band_counts.get(band, 0) + 1
+            
             for band, count in band_counts.items():
                 f.write(f"  {normalize_band(band)}: {count}\n")
 
-def generate_station_report(df, contest_data, filepath):
+def generate_station_report(data, contest_data, filepath):
     """Generate station-by-station activity report"""
     with open(filepath, 'w') as f:
         f.write(f"Station Activity Report - {contest_data['callsign']}\n")
         f.write("=" * 50 + "\n\n")
         
-        if df.empty:
+        if not data:
             f.write("No QSO data available.\n")
             return
         
-        station_stats = df.groupby('call').agg({
-            'band': 'count',
-            'grid': 'first'
-        }).rename(columns={'band': 'qsos'})
+        # Group by callsign
+        station_stats = {}
+        for row in data:
+            call = row.get('call', '')
+            if call:
+                if call not in station_stats:
+                    station_stats[call] = {'qsos': 0, 'grid': row.get('grid', '')}
+                station_stats[call]['qsos'] += 1
         
         f.write("Station\tQSOs\tGrid\n")
         f.write("-" * 30 + "\n")
         
-        for call, stats in station_stats.iterrows():
+        for call, stats in station_stats.items():
             f.write(f"{call}\t{stats['qsos']}\t{stats['grid']}\n")
 
-def generate_weekend_analysis(df, contest_data, filepath):
+def generate_weekend_analysis(data, contest_data, filepath):
     """Generate weekend-by-weekend analysis"""
     with open(filepath, 'w') as f:
         f.write(f"Weekend Analysis - {contest_data['callsign']}\n")
         f.write("=" * 50 + "\n\n")
         
-        if df.empty:
+        if not data:
             f.write("No QSO data available.\n")
             return
         
         # Group by date
-        daily_stats = df.groupby('date').agg({
-            'call': 'count',
-            'band': lambda x: x.nunique()
-        }).rename(columns={'call': 'qsos', 'band': 'bands'})
+        daily_stats = {}
+        for row in data:
+            date = row.get('date', '')
+            if date:
+                if date not in daily_stats:
+                    daily_stats[date] = {'qsos': 0, 'bands': set()}
+                daily_stats[date]['qsos'] += 1
+                daily_stats[date]['bands'].add(row.get('band', ''))
         
         f.write("Date\t\tQSOs\tBands\n")
         f.write("-" * 30 + "\n")
         
-        for date, stats in daily_stats.iterrows():
-            f.write(f"{date}\t{stats['qsos']}\t{stats['bands']}\n")
+        for date, stats in daily_stats.items():
+            f.write(f"{date}\t{stats['qsos']}\t{len(stats['bands'])}\n")
 
-def generate_comprehensive_analysis(df, contest_data, filepath):
+def generate_comprehensive_analysis(data, contest_data, filepath):
     """Generate comprehensive contest analysis"""
     with open(filepath, 'w') as f:
         f.write(f"Comprehensive Analysis - {contest_data['callsign']}\n")
         f.write("=" * 60 + "\n\n")
         
-        if df.empty:
+        if not data:
             f.write("No QSO data available.\n")
             return
         
         # Basic statistics
         f.write("CONTEST OVERVIEW\n")
         f.write("-" * 20 + "\n")
-        f.write(f"Total QSOs: {len(df)}\n")
-        f.write(f"Unique Stations: {df['call'].nunique()}\n")
-        f.write(f"Bands Active: {df['band'].nunique()}\n\n")
+        f.write(f"Total QSOs: {len(data)}\n")
+        f.write(f"Unique Stations: {len(set(row.get('call', '') for row in data))}\n")
+        f.write(f"Bands Active: {len(set(row.get('band', '') for row in data))}\n\n")
         
         # Distance analysis
-        if 'sourcegrid' in df.columns and 'grid' in df.columns:
-            distances = []
-            for _, row in df.iterrows():
+        distances = []
+        for row in data:
+            if row.get('sourcegrid') and row.get('grid'):
                 dist = calculate_distance(row['sourcegrid'], row['grid'])
                 distances.append(dist)
-            
-            if distances:
-                import_heavy_deps()
-                f.write("DISTANCE ANALYSIS\n")
-                f.write("-" * 20 + "\n")
-                f.write(f"Average Distance: {np.mean(distances):.1f} km\n")
-                f.write(f"Maximum Distance: {max(distances):.1f} km\n")
-                f.write(f"Minimum Distance: {min(distances):.1f} km\n\n")
+        
+        if distances:
+            f.write("DISTANCE ANALYSIS\n")
+            f.write("-" * 20 + "\n")
+            f.write(f"Average Distance: {sum(distances)/len(distances):.1f} km\n")
+            f.write(f"Maximum Distance: {max(distances):.1f} km\n")
+            f.write(f"Minimum Distance: {min(distances):.1f} km\n\n")
 
-def generate_directional_visualization(df, contest_data, filepath):
-    """Generate directional visualization plot"""
-    import_heavy_deps()
-    
-    if df.empty:
-        # Create empty plot
-        fig, ax = plt.subplots(figsize=(10, 8))
-        ax.text(0.5, 0.5, 'No QSO data available', ha='center', va='center', transform=ax.transAxes)
-        plt.savefig(filepath, dpi=150, bbox_inches='tight')
-        plt.close()
-        return
-    
-    # Create polar plot for directional analysis
-    fig, ax = plt.subplots(figsize=(10, 8), subplot_kw=dict(projection='polar'))
-    
-    # Calculate bearings if we have grid data
-    if 'sourcegrid' in df.columns and 'grid' in df.columns:
+def generate_directional_analysis(data, contest_data, filepath):
+    """Generate directional analysis text report (no matplotlib)"""
+    with open(filepath, 'w') as f:
+        f.write(f"Directional Analysis - {contest_data['callsign']}\n")
+        f.write("=" * 50 + "\n\n")
+        
+        if not data:
+            f.write("No QSO data available.\n")
+            return
+        
+        # Calculate bearings and distances
         bearings = []
         distances = []
         
-        for _, row in df.iterrows():
-            bearing = calculate_bearing(row['sourcegrid'], row['grid'])
-            distance = calculate_distance(row['sourcegrid'], row['grid'])
-            if bearing is not None:
-                bearings.append(math.radians(bearing))
-                distances.append(distance)
+        for row in data:
+            if row.get('sourcegrid') and row.get('grid'):
+                bearing = calculate_bearing(row['sourcegrid'], row['grid'])
+                distance = calculate_distance(row['sourcegrid'], row['grid'])
+                if bearing is not None:
+                    bearings.append(bearing)
+                    distances.append(distance)
         
         if bearings:
-            # Plot QSOs as points
-            ax.scatter(bearings, distances, alpha=0.6, s=50)
-            ax.set_title(f"Directional Analysis - {contest_data['callsign']}", pad=20)
-            ax.set_theta_zero_location('N')
-            ax.set_theta_direction(-1)
-            ax.set_ylabel('Distance (km)')
+            f.write("DIRECTIONAL SUMMARY\n")
+            f.write("-" * 20 + "\n")
+            f.write(f"Total QSOs with grid data: {len(bearings)}\n")
+            f.write(f"Average bearing: {sum(bearings)/len(bearings):.1f}°\n")
+            f.write(f"Average distance: {sum(distances)/len(distances):.1f} km\n\n")
+            
+            # Bearing distribution
+            f.write("BEARING DISTRIBUTION\n")
+            f.write("-" * 20 + "\n")
+            sectors = {'N': 0, 'NE': 0, 'E': 0, 'SE': 0, 'S': 0, 'SW': 0, 'W': 0, 'NW': 0}
+            
+            for bearing in bearings:
+                if 337.5 <= bearing or bearing < 22.5:
+                    sectors['N'] += 1
+                elif 22.5 <= bearing < 67.5:
+                    sectors['NE'] += 1
+                elif 67.5 <= bearing < 112.5:
+                    sectors['E'] += 1
+                elif 112.5 <= bearing < 157.5:
+                    sectors['SE'] += 1
+                elif 157.5 <= bearing < 202.5:
+                    sectors['S'] += 1
+                elif 202.5 <= bearing < 247.5:
+                    sectors['SW'] += 1
+                elif 247.5 <= bearing < 292.5:
+                    sectors['W'] += 1
+                elif 292.5 <= bearing < 337.5:
+                    sectors['NW'] += 1
+            
+            for sector, count in sectors.items():
+                f.write(f"{sector}: {count} QSOs\n")
         else:
-            ax.text(0, 0, 'Insufficient grid data for directional analysis', ha='center', va='center')
-    else:
-        ax.text(0, 0, 'No grid square data available', ha='center', va='center')
-    
-    plt.savefig(filepath, dpi=150, bbox_inches='tight')
-    plt.close()
+            f.write("Insufficient grid data for directional analysis.\n")
 
 def calculate_bearing(grid1, grid2):
     """Calculate bearing from grid1 to grid2"""
