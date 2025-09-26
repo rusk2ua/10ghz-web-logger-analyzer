@@ -3,37 +3,66 @@ import boto3
 import os
 import uuid
 import tempfile
-import zipfile
 from datetime import datetime, timedelta
-import pandas as pd
 import requests
-from io import StringIO, BytesIO
+from io import StringIO
 import math
-import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
-import matplotlib.pyplot as plt
-import numpy as np
 from collections import defaultdict
+
+# Import heavy dependencies only when needed
+def import_heavy_deps():
+    global pd, plt, np
+    import pandas as pd
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import numpy as np
 
 s3_client = boto3.client('s3')
 FILES_BUCKET = os.environ['FILES_BUCKET']
 
 def handler(event, context):
     try:
-        # Parse the request
-        body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
-        contest_data = json.loads(body['contestData'])
+        # Handle CORS preflight
+        if event.get('httpMethod') == 'OPTIONS':
+            return {
+                'statusCode': 200,
+                'headers': {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type, X-Amz-Date, Authorization, X-Api-Key'
+                },
+                'body': ''
+            }
+        
+        # Parse the request - handle both JSON and FormData
+        if event.get('isBase64Encoded'):
+            # Handle multipart form data (file uploads)
+            import base64
+            body_bytes = base64.b64decode(event['body'])
+            # For now, use sample data for file uploads
+            contest_data = {
+                'inputType': 'files',
+                'callsign': 'SAMPLE',
+                'contestYear': 2024,
+                'operatorCategory': 'SINGLE-OP',
+                'stationCategory': 'FIXED',
+                'gridSquare': 'FN20xx',
+                'outputs': ['cabrillo', 'summary']
+            }
+            df = create_sample_data()
+        else:
+            # Handle JSON data (Google Sheets)
+            body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
+            contest_data = json.loads(body.get('contestData', '{}'))
+            
+            if contest_data.get('inputType') == 'sheets':
+                df = get_sheet_data(contest_data['sheetsUrl'])
+            else:
+                df = create_sample_data()
         
         # Create temporary directory for processing
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Process based on input type
-            if contest_data['inputType'] == 'files':
-                # Handle file uploads (would need multipart parsing in real implementation)
-                # For now, simulate with sample data
-                df = create_sample_data()
-            else:
-                # Handle Google Sheets URL
-                df = get_sheet_data(contest_data['sheetsUrl'])
             
             # Generate requested outputs
             output_files = []
@@ -136,6 +165,7 @@ def handler(event, context):
 
 def create_sample_data():
     """Create sample contest data for demonstration"""
+    import_heavy_deps()
     data = {
         'date': ['2024-08-17', '2024-08-17', '2024-08-18'],
         'time': ['1400', '1430', '0900'],
@@ -149,6 +179,7 @@ def create_sample_data():
 def get_sheet_data(sheet_url):
     """Convert Google Sheets URL to CSV export URL and fetch data"""
     try:
+        import_heavy_deps()
         sheet_id = sheet_url.split('/d/')[1].split('/')[0]
         csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
         response = requests.get(csv_url, timeout=30)
@@ -321,6 +352,7 @@ def generate_comprehensive_analysis(df, contest_data, filepath):
                 distances.append(dist)
             
             if distances:
+                import_heavy_deps()
                 f.write("DISTANCE ANALYSIS\n")
                 f.write("-" * 20 + "\n")
                 f.write(f"Average Distance: {np.mean(distances):.1f} km\n")
@@ -329,6 +361,8 @@ def generate_comprehensive_analysis(df, contest_data, filepath):
 
 def generate_directional_visualization(df, contest_data, filepath):
     """Generate directional visualization plot"""
+    import_heavy_deps()
+    
     if df.empty:
         # Create empty plot
         fig, ax = plt.subplots(figsize=(10, 8))
