@@ -219,6 +219,30 @@ def determine_contest_category(data):
     else:
         return '10 GHz and Up'
 
+def extract_contest_year_from_data(data):
+    """Extract contest year from QSO data"""
+    if not data:
+        return 2024  # Default fallback
+    
+    # Look for dates in the QSO data
+    years = set()
+    for row in data:
+        date_str = row.get('date', '')
+        if date_str:
+            # Handle different date formats
+            if len(date_str) == 8:  # YYYYMMDD format
+                year = int(date_str[:4])
+                years.add(year)
+            elif len(date_str) == 10 and '-' in date_str:  # YYYY-MM-DD format
+                year = int(date_str.split('-')[0])
+                years.add(year)
+    
+    # Return the most common year, or current year if none found
+    if years:
+        return max(years)  # Use the latest year if multiple
+    else:
+        return 2024  # Default fallback
+
 s3_client = boto3.client('s3')
 FILES_BUCKET = os.environ['FILES_BUCKET']
 
@@ -245,6 +269,10 @@ def handler(event, context):
             raw_body = event.get('body', '')
             if not raw_body:
                 raise Exception("Empty request body")
+            
+            # Additional debugging
+            if isinstance(raw_body, str) and len(raw_body) < 100:
+                raise Exception(f"Request body too short: '{raw_body}'")
             
             body = json.loads(raw_body) if isinstance(raw_body, str) else raw_body
             contest_data = body.get('contestData', {})
@@ -279,11 +307,13 @@ def handler(event, context):
         callsign = extract_callsign_from_data(data)
         grid_square = extract_grid_from_data(data)
         contest_category = determine_contest_category(data)
+        contest_year = extract_contest_year_from_data(data)
         
         # Update contest_data with extracted information
         contest_data['callsign'] = callsign
         contest_data['gridSquare'] = grid_square
         contest_data['contestCategory'] = contest_category
+        contest_data['contestYear'] = contest_year
         
         # Create temporary directory for processing
         with tempfile.TemporaryDirectory() as temp_dir:
