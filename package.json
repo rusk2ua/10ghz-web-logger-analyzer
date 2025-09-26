@@ -1,0 +1,19 @@
+{
+  "name": "arrl-10ghz-web",
+  "version": "1.0.0",
+  "description": "Web interface for ARRL 10 GHz Contest Logger",
+  "scripts": {
+    "build": "cdk synth",
+    "deploy": "cdk deploy",
+    "dev": "python -m http.server 8000 --directory frontend",
+    "destroy": "cdk destroy"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.100.0",
+    "aws-cdk-lib": "^2.100.0",
+    "constructs": "^10.3.0",
+    "typescript": "^5.2.0",
+    "@types/node": "^20.8.0"
+  },
+  "dependencies": {}
+}

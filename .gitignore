@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+*.log
+npm-debug.log*
+
+# CDK
+cdk.out/
+*.d.ts
+*.js
+*.js.map
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Lambda layers
+lambda/layers/python/python/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+
+# Environment variables
+.env
+.env.local
