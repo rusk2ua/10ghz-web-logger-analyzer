@@ -36,11 +36,9 @@ def parse_multipart_data(event):
     # In production, you'd use a proper multipart parser
     contest_data = {
         'inputType': 'files',
-        'callsign': 'SAMPLE',
         'contestYear': 2024,
         'operatorCategory': 'SINGLE-OP',
         'stationCategory': 'FIXED',
-        'gridSquare': 'FN20xx',
         'outputs': ['cabrillo', 'summary']
     }
     
@@ -54,23 +52,95 @@ QSO: 10GHz PH 20240818 0900 SAMPLE FN20xx N3GHI FN21cc"""
 def parse_cabrillo_file_content(file_content):
     """Parse Cabrillo file content into data structure"""
     data = []
+    metadata = {}
     lines = file_content.strip().split('\n')
     
     for line in lines:
         line = line.strip()
-        if line.startswith('QSO:'):
+        if line.startswith('CALLSIGN:'):
+            metadata['callsign'] = line.split(':', 1)[1].strip()
+        elif line.startswith('GRID-LOCATOR:'):
+            metadata['grid'] = line.split(':', 1)[1].strip()
+        elif line.startswith('QSO:'):
             parts = line.split()
             if len(parts) >= 8:
-                data.append({
+                qso_data = {
                     'date': parts[3],
                     'time': parts[4],
                     'band': parts[1],
                     'sourcegrid': parts[6],
                     'call': parts[7],
                     'grid': parts[8] if len(parts) > 8 else ''
-                })
+                }
+                # Add metadata to each QSO for consistency
+                qso_data['source_callsign'] = metadata.get('callsign', 'UNKNOWN')
+                qso_data['source_grid'] = metadata.get('grid', parts[6])
+                data.append(qso_data)
     
     return data
+
+def extract_callsign_from_data(data):
+    """Extract the operator's callsign from QSO data"""
+    if not data:
+        return 'UNKNOWN'
+    
+    # Check if we have metadata from Cabrillo parsing
+    for row in data:
+        if 'source_callsign' in row and row['source_callsign'] != 'UNKNOWN':
+            return row['source_callsign']
+    
+    # Fallback: try to extract from QSO structure
+    # In QSO lines, the operator's call should be consistent
+    return 'SAMPLE'
+
+def extract_grid_from_data(data):
+    """Extract the operator's grid square from QSO data"""
+    if not data:
+        return 'FN20xx'
+    
+    # Check if we have metadata from Cabrillo parsing
+    for row in data:
+        if 'source_grid' in row and row['source_grid']:
+            return row['source_grid']
+    
+    # Fallback: extract the most common source grid
+    grids = [row.get('sourcegrid', '') for row in data if row.get('sourcegrid')]
+    if grids:
+        # Return the most common grid (should be consistent)
+        from collections import Counter
+        return Counter(grids).most_common(1)[0][0]
+    
+    return 'FN20xx'
+
+def determine_contest_category(data):
+    """Determine contest category based on bands used"""
+    if not data:
+        return '10 GHz'
+    
+    # Extract all bands used
+    bands = set()
+    for row in data:
+        band = row.get('band', '').lower()
+        if 'ghz' in band:
+            # Extract frequency
+            import re
+            match = re.search(r'(\d+(?:\.\d+)?)', band)
+            if match:
+                freq = float(match.group(1))
+                bands.add(freq)
+    
+    # Determine category based on bands
+    if not bands:
+        return '10 GHz'
+    
+    max_freq = max(bands) if bands else 0
+    
+    # If only 10 GHz band used, category is "10 GHz"
+    # If any band above 10 GHz used, category is "10 GHz and Up"
+    if max_freq <= 10.0:
+        return '10 GHz'
+    else:
+        return '10 GHz and Up'
 
 s3_client = boto3.client('s3')
 FILES_BUCKET = os.environ['FILES_BUCKET']
@@ -112,12 +182,21 @@ def handler(event, context):
             except (json.JSONDecodeError, KeyError) as e:
                 raise Exception(f"Invalid request format: {str(e)}")
         
+        # Extract information from log data
+        callsign = extract_callsign_from_data(data)
+        grid_square = extract_grid_from_data(data)
+        contest_category = determine_contest_category(data)
+        
+        # Update contest_data with extracted information
+        contest_data['callsign'] = callsign
+        contest_data['gridSquare'] = grid_square
+        contest_data['contestCategory'] = contest_category
+        
         # Create temporary directory for processing
         with tempfile.TemporaryDirectory() as temp_dir:
             
             # Generate requested outputs
             output_files = []
-            callsign = contest_data['callsign']
             year = contest_data['contestYear']
             
             # Get the latest contest date from the data
@@ -292,12 +371,19 @@ def generate_cabrillo(data, contest_data, filepath):
         f.write("CONTEST: ARRL-10-GHZ\n")
         f.write(f"CATEGORY-OPERATOR: {contest_data['operatorCategory']}\n")
         f.write(f"CATEGORY-STATION: {contest_data['stationCategory']}\n")
+        f.write(f"CATEGORY-BAND: {contest_data['contestCategory']}\n")
         f.write(f"GRID-LOCATOR: {contest_data['gridSquare']}\n")
         
         if contest_data.get('power'):
             f.write(f"CATEGORY-POWER: {contest_data['power']}W\n")
         
-        f.write(f"CLAIMED-SCORE: 0\n")  # Will be calculated
+        # Calculate basic score
+        total_qsos = len(data)
+        unique_calls = len(set(row.get('call', '') for row in data))
+        bands_worked = len(set(row.get('band', '') for row in data))
+        basic_score = total_qsos * bands_worked  # Simplified scoring
+        
+        f.write(f"CLAIMED-SCORE: {basic_score}\n")
         
         # QSO lines
         for row in data:

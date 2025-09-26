@@ -152,6 +152,20 @@ body {
     margin-top: 0.25rem;
 }
 
+.info-section {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-top: 1rem;
+}
+
+.info-section p {
+    margin: 0;
+    color: #495057;
+    font-size: 0.9rem;
+}
+
 /* Radio and checkbox groups */
 .input-group {
     display: flex;
