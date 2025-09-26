@@ -37,7 +37,6 @@ def parse_multipart_data(event):
     contest_data = {
         'inputType': 'files',
         'contestYear': 2024,
-        'operatorCategory': 'SINGLE-OP',
         'stationCategory': 'FIXED',
         'outputs': ['cabrillo', 'summary']
     }
@@ -369,9 +368,8 @@ def generate_cabrillo(data, contest_data, filepath):
         f.write("START-OF-LOG: 3.0\n")
         f.write(f"CALLSIGN: {contest_data['callsign']}\n")
         f.write("CONTEST: ARRL-10-GHZ\n")
-        f.write(f"CATEGORY-OPERATOR: {contest_data['operatorCategory']}\n")
+        f.write(f"CATEGORY: {contest_data['contestCategory']}\n")
         f.write(f"CATEGORY-STATION: {contest_data['stationCategory']}\n")
-        f.write(f"CATEGORY-BAND: {contest_data['contestCategory']}\n")
         f.write(f"GRID-LOCATOR: {contest_data['gridSquare']}\n")
         
         if contest_data.get('power'):

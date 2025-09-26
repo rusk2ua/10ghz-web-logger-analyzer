@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ARRL 10 GHz Contest Logger</title>
     <link rel="stylesheet" href="styles.css">
 </head>
+
 <body>
     <header class="header">
         <h1>ARRL 10 GHz Contest Logger</h1>
@@ -21,14 +23,14 @@
         <div class="container">
             <h2>Contest Log Processing</h2>
             <p class="description">
-                Upload your contest log files or provide a Google Sheets URL to generate Cabrillo format files, 
+                Upload your contest log files or provide a Google Sheets URL to generate Cabrillo format files,
                 analysis reports, and visualizations for the ARRL 10 GHz and Up Contest.
             </p>
 
             <form id="processForm" class="form">
                 <div class="form-section">
                     <h3>Step 1 - Input Source</h3>
-                    
+
                     <div class="input-group">
                         <label class="radio-group">
                             <input type="radio" name="inputType" value="files" checked>
@@ -42,42 +44,34 @@
 
                     <div id="fileUpload" class="upload-section">
                         <label for="logFiles" class="file-label">Select Log Files:</label>
-                        <input type="file" id="logFiles" name="logFiles" multiple accept=".log,.csv,.txt" class="file-input">
+                        <input type="file" id="logFiles" name="logFiles" multiple accept=".log,.csv,.txt"
+                            class="file-input">
                         <div class="file-info">Supported formats: .log, .csv, .txt</div>
                     </div>
 
                     <div id="sheetsUrl" class="url-section" style="display: none;">
                         <label for="googleSheetsUrl" class="input-label">Google Sheets URL:</label>
-                        <input type="url" id="googleSheetsUrl" name="googleSheetsUrl" class="text-input" 
-                               placeholder="https://docs.google.com/spreadsheets/d/...">
+                        <input type="url" id="googleSheetsUrl" name="googleSheetsUrl" class="text-input"
+                            placeholder="https://docs.google.com/spreadsheets/d/...">
                         <div class="input-info">Ensure the sheet is publicly viewable</div>
                     </div>
                 </div>
 
                 <div class="form-section">
                     <h3>Step 2 - Contest Information</h3>
-                    
+
                     <div class="form-row">
                         <div class="form-col">
-                            <label for="callsign" class="input-label">Callsign:</label>
-                            <input type="text" id="callsign" name="callsign" class="text-input" required>
+                            <label for="contestYear" class="input-label">Contest Year:</label>
+                            <input type="number" id="contestYear" name="contestYear" class="text-input" min="2020"
+                                max="2030" value="2024" required>
                         </div>
                         <div class="form-col">
-                            <label for="contestYear" class="input-label">Contest Year:</label>
-                            <input type="number" id="contestYear" name="contestYear" class="text-input" 
-                                   min="2020" max="2030" value="2024" required>
+                            <!-- Contest category will be automatically determined -->
                         </div>
                     </div>
 
                     <div class="form-row">
-                        <div class="form-col">
-                            <label for="operatorCategory" class="input-label">Operator Category:</label>
-                            <select id="operatorCategory" name="operatorCategory" class="select-input">
-                                <option value="SINGLE-OP">Single-Op</option>
-                                <option value="MULTI-OP">Multi-Op</option>
-                                <option value="CHECKLOG">Check Log</option>
-                            </select>
-                        </div>
                         <div class="form-col">
                             <label for="stationCategory" class="input-label">Station Category:</label>
                             <select id="stationCategory" name="stationCategory" class="select-input">
@@ -86,24 +80,21 @@
                                 <option value="PORTABLE">Portable</option>
                             </select>
                         </div>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-col">
-                            <label for="gridSquare" class="input-label">Grid Square:</label>
-                            <input type="text" id="gridSquare" name="gridSquare" class="text-input" 
-                                   placeholder="FN20xx" pattern="[A-Ra-r]{2}[0-9]{2}[A-Xa-x]{2}" required>
-                        </div>
                         <div class="form-col">
                             <label for="power" class="input-label">Power (watts):</label>
                             <input type="number" id="power" name="power" class="text-input" min="1" max="1500">
                         </div>
                     </div>
+
+                    <div class="info-section">
+                        <p><strong>Note:</strong> Callsign and grid square will be automatically extracted from your log data. 
+                        Contest category (10 GHz vs 10 GHz and Up) will be automatically determined based on the bands used in your log.</p>
+                    </div>
                 </div>
 
                 <div class="form-section">
                     <h3>Step 3 - Output Options</h3>
-                    
+
                     <div class="checkbox-group">
                         <label class="checkbox-item">
                             <input type="checkbox" name="outputs" value="cabrillo" checked>
@@ -166,12 +157,13 @@
     </main>
 
     <footer class="footer">
-        <p>ARRL 10 GHz Contest Logger v1.3.0 | 
-           <a href="mailto:support@example.com">Support</a> | 
-           <a href="#" onclick="showAbout()">About</a>
+        <p>ARRL 10 GHz Contest Logger v1.3.0 |
+            <a href="mailto:support@example.com">Support</a> |
+            <a href="#" onclick="showAbout()">About</a>
         </p>
     </footer>
 
     <script src="script.js"></script>
 </body>
+
 </html>
