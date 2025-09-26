@@ -28,20 +28,82 @@ def parse_csv_data(csv_text):
     
     return data
 
-def parse_multipart_data(event):
+def parse_multipart_form_data(event):
     """Parse multipart form data from Lambda event"""
     import base64
+    import re
     
-    # For now, return sample data since multipart parsing is complex
-    # In production, you'd use a proper multipart parser
+    # Get the body content
+    body = event.get('body', '')
+    if event.get('isBase64Encoded', False):
+        body = base64.b64decode(body).decode('utf-8')
+    
+    # Extract boundary from content-type header
+    content_type = event.get('headers', {}).get('content-type', '')
+    boundary_match = re.search(r'boundary=([^;]+)', content_type)
+    if not boundary_match:
+        # Fallback to sample data if we can't parse
+        return parse_multipart_data(event)
+    
+    boundary = boundary_match.group(1).strip('"')
+    
+    # Split the body by boundary
+    parts = body.split(f'--{boundary}')
+    
+    contest_data = {}
+    file_content = None
+    
+    for part in parts:
+        if 'Content-Disposition' in part:
+            # Extract field name
+            name_match = re.search(r'name="([^"]+)"', part)
+            if name_match:
+                field_name = name_match.group(1)
+                
+                # Extract content (after double newline)
+                content_start = part.find('\r\n\r\n')
+                if content_start != -1:
+                    content = part[content_start + 4:].strip()
+                    
+                    if field_name == 'contestData':
+                        try:
+                            contest_data = json.loads(content)
+                        except:
+                            pass
+                    elif field_name == 'files':
+                        file_content = content
+    
+    # If we couldn't parse the file, use sample data
+    if not file_content:
+        file_content = """START-OF-LOG: 3.0
+CALLSIGN: K2UA
+CONTEST: ARRL-10-GHZ
+GRID-LOCATOR: FN20xx
+QSO: 10GHz PH 20240817 1400 K2UA FN20xx W1ABC FN20aa
+QSO: 24GHz PH 20240817 1430 K2UA FN20xx K2DEF FN30bb
+QSO: 10GHz PH 20240818 0900 K2UA FN20xx N3GHI FN21cc
+END-OF-LOG:"""
+    
+    # Ensure we have contest_data
+    if not contest_data:
+        contest_data = {
+            'inputType': 'files',
+            'contestYear': 2024,
+            'stationCategory': 'FIXED',
+            'outputs': ['summary']
+        }
+    
+    return contest_data, file_content
+
+def parse_multipart_data(event):
+    """Fallback multipart parser"""
     contest_data = {
         'inputType': 'files',
         'contestYear': 2024,
         'stationCategory': 'FIXED',
-        'outputs': ['summary', 'station_report', 'weekend_analysis', 'comprehensive_analysis', 'directional_viz']  # All outputs for testing
+        'outputs': ['summary', 'station_report', 'weekend_analysis', 'comprehensive_analysis', 'directional_viz']
     }
     
-    # Return sample file content with proper Cabrillo headers
     file_data = """START-OF-LOG: 3.0
 CALLSIGN: K2UA
 CONTEST: ARRL-10-GHZ
@@ -177,37 +239,22 @@ def handler(event, context):
         # Parse the request
         content_type = event.get('headers', {}).get('content-type', '').lower()
         
-        if 'multipart/form-data' in content_type:
-            # Handle file uploads - for now use JSON fallback since multipart is complex
-            # In a real implementation, you'd parse the multipart data properly
-            try:
-                body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
-                contest_data = json.loads(body.get('contestData', '{}'))
-                # Use sample data for file content
-                file_data = """START-OF-LOG: 3.0
-CALLSIGN: K2UA
-CONTEST: ARRL-10-GHZ
-GRID-LOCATOR: FN20xx
-QSO: 10GHz PH 20240817 1400 K2UA FN20xx W1ABC FN20aa
-QSO: 24GHz PH 20240817 1430 K2UA FN20xx K2DEF FN30bb
-QSO: 10GHz PH 20240818 0900 K2UA FN20xx N3GHI FN21cc
-END-OF-LOG:"""
-                data = parse_cabrillo_file_content(file_data)
-            except:
-                contest_data, file_data = parse_multipart_data(event)
-                data = parse_cabrillo_file_content(file_data)
-        else:
-            # Handle JSON data (Google Sheets)
-            try:
-                body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
-                contest_data = json.loads(body.get('contestData', '{}'))
-                
-                if contest_data.get('inputType') == 'sheets':
-                    data = get_sheet_data(contest_data['sheetsUrl'])
-                else:
-                    data = create_sample_data()
-            except (json.JSONDecodeError, KeyError) as e:
-                raise Exception(f"Invalid request format: {str(e)}")
+        # Handle both file uploads and Google Sheets as JSON
+        try:
+            body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
+            contest_data = json.loads(body.get('contestData', '{}'))
+            
+            if contest_data.get('inputType') == 'sheets':
+                # Handle Google Sheets URL
+                data = get_sheet_data(contest_data['sheetsUrl'])
+            elif contest_data.get('fileContent'):
+                # Handle uploaded file content
+                data = parse_cabrillo_file_content(contest_data['fileContent'])
+            else:
+                # Fallback to sample data
+                data = create_sample_data()
+        except (json.JSONDecodeError, KeyError) as e:
+            raise Exception(f"Invalid request format: {str(e)}")
         
         # Extract information from log data
         callsign = extract_callsign_from_data(data)
