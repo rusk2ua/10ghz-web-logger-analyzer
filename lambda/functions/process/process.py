@@ -241,20 +241,39 @@ def handler(event, context):
         
         # Handle both file uploads and Google Sheets as JSON
         try:
-            body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
-            contest_data = json.loads(body.get('contestData', '{}'))
+            # Debug: log the raw body
+            raw_body = event.get('body', '')
+            if not raw_body:
+                raise Exception("Empty request body")
+            
+            body = json.loads(raw_body) if isinstance(raw_body, str) else raw_body
+            contest_data = body.get('contestData', {})
+            
+            # If contestData is a string, parse it as JSON (backward compatibility)
+            if isinstance(contest_data, str):
+                contest_data = json.loads(contest_data)
+            
+            if not contest_data:
+                raise Exception("No contest data provided")
             
             if contest_data.get('inputType') == 'sheets':
                 # Handle Google Sheets URL
                 data = get_sheet_data(contest_data['sheetsUrl'])
             elif contest_data.get('fileContent'):
                 # Handle uploaded file content
-                data = parse_cabrillo_file_content(contest_data['fileContent'])
+                file_content = contest_data['fileContent']
+                if not file_content or file_content.strip() == '':
+                    raise Exception("Empty file content")
+                data = parse_cabrillo_file_content(file_content)
             else:
                 # Fallback to sample data
                 data = create_sample_data()
-        except (json.JSONDecodeError, KeyError) as e:
-            raise Exception(f"Invalid request format: {str(e)}")
+        except json.JSONDecodeError as e:
+            raise Exception(f"JSON parsing error: {str(e)}")
+        except KeyError as e:
+            raise Exception(f"Missing required field: {str(e)}")
+        except Exception as e:
+            raise Exception(f"Request processing error: {str(e)}")
         
         # Extract information from log data
         callsign = extract_callsign_from_data(data)
