@@ -24,8 +24,10 @@ keeps the Python it was created with, so a 3.9 venv can't install the dependenci
 
 **First time (no copy on your machine yet):**
 
+Change `~/Projects` to wherever you keep repos:
+
 ```bash
-cd ~/Projects          # or wherever you keep repos
+cd ~/Projects
 git clone https://github.com/rusk2ua/10ghz-web-logger-analyzer.git
 cd 10ghz-web-logger-analyzer
 ```
@@ -131,7 +133,7 @@ That folder is git-ignored. Delete it whenever you like with `rm -rf local-outpu
 ```bash
 cd ~/Projects/10ghz-web-logger-analyzer
 source .venv/bin/activate
-git pull                      # if there are new commits
+git pull
 python dev/local_server.py
 ```
 

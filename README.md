@@ -53,9 +53,11 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 
-pytest                         # 25 tests, ~10 s
-python dev/local_server.py     # open http://localhost:8000
+pytest
+python dev/local_server.py
 ```
+
+`pytest` runs the test suite in about 10 seconds. The server runs at http://localhost:8000.
 
 The local server serves `frontend/` and routes `POST /api/process` to the same Lambda
 handler that runs in AWS. Generated files go to `./local-output/` instead of S3. Click the
@@ -114,19 +116,22 @@ DOMAIN_NAME=microwavedx.com ALT_DOMAIN_NAME=www.microwavedx.com ./deploy.sh
 
 **CLI, CloudFormation only:**
 
+First create the certificate. It must be in us-east-1. The second command prints its ARN:
+
 ```bash
-# 1. Certificate (must be us-east-1)
 aws cloudformation deploy --region us-east-1 --stack-name arrl-10ghz-web-cert \
   --template-file certificate.yaml \
   --parameter-overrides DomainName=10ghz.microwavedx.com HostedZoneId=<your zone id>
 aws cloudformation describe-stacks --region us-east-1 --stack-name arrl-10ghz-web-cert \
-  --query "Stacks[0].Outputs[0].OutputValue" --output text      # → certificate ARN
+  --query "Stacks[0].Outputs[0].OutputValue" --output text
+```
 
-# 2. App, with the certificate
+Then deploy the app with that certificate, and upload `frontend/` the way `deploy.sh` does:
+
+```bash
 sam build
 sam deploy --parameter-overrides DomainName=10ghz.microwavedx.com \
   CertificateArn=<arn from step 1> HostedZoneId=<your zone id>
-# then upload frontend/ as in deploy.sh
 ```
 
 **Console:**
@@ -190,11 +195,14 @@ aws cloudformation delete-stack --region us-east-2 --stack-name Arrl10GhzWebStac
 When `10ghz-log-analyzer` gets a new release:
 
 ```bash
-scripts/sync-upstream.sh            # or: scripts/sync-upstream.sh v1.7.0
-git diff backend/app/analyzer/      # review what changed
-pytest                              # includes a web-vs-CLI parity test
+scripts/sync-upstream.sh
+git diff backend/app/analyzer/
+pytest
 ./deploy.sh
 ```
+
+To pin a specific release, pass it to the sync script, e.g. `scripts/sync-upstream.sh v1.7.0`.
+Review the `git diff` of what changed upstream; `pytest` includes the web-vs-CLI parity test.
 
 If upstream adds a new script or command-line option, add it to the output tables at the
 top of `backend/app/runner.py` and as a checkbox in `frontend/index.html`. If upstream adds

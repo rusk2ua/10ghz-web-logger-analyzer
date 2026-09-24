@@ -58,13 +58,41 @@ Docker Desktop → Settings → General and turn on **"Use Rosetta for x86_64/am
 emulation"**. The Lambda image is built for Intel (x86_64), and Rosetta makes that build
 much faster.
 
-Check that all three work:
+Open a **new terminal window** so it picks up the new tools, then check each one:
 
 ```bash
-aws --version          # should say aws-cli/2.x
-sam --version          # SAM CLI, version 1.x
-docker info | head -3  # must print server info, not "Cannot connect"
+aws --version
+sam --version
+docker info
 ```
+
+- `aws --version` should say `aws-cli/2.x`.
+- `sam --version` should say `SAM CLI, version 1.x`.
+- `docker info` should print a Client and a Server section, not "Cannot connect to the
+  Docker daemon".
+
+If `sam` or `docker` says `command not found`:
+
+- **`sam`:** run `which brew`. On Apple Silicon it must say `/opt/homebrew/bin/brew`. If it
+  doesn't, run the "Next steps" lines the Homebrew installer printed (normally the two
+  below), open a new terminal, and run `brew install aws-sam-cli` again if needed.
+
+  ```bash
+  echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+  ```
+
+- **`docker`:** open Docker Desktop from Applications and finish its first-time setup
+  until it shows **Engine running**; that step installs the `docker` command. If
+  `~/.docker/bin/docker` exists but `docker` still isn't found, go to Docker Desktop →
+  Settings → Advanced, choose **System (requires password)**, and click Apply & restart.
+  Or add `~/.docker/bin` to your PATH:
+
+  ```bash
+  echo 'export PATH="$HOME/.docker/bin:$PATH"' >> ~/.zprofile
+  ```
+
+  Then open a new terminal.
 
 ## Step 2: Connect the AWS CLI to your account
 
@@ -72,11 +100,10 @@ If you use access keys:
 
 ```bash
 aws configure
-# AWS Access Key ID:     <your key>
-# AWS Secret Access Key: <your secret>
-# Default region name:   us-east-2
-# Default output format: json
 ```
+
+It asks four questions. Enter your access key ID and secret access key, `us-east-2` for
+the default region, and `json` for the output format.
 
 If you use IAM Identity Center (SSO), run `aws configure sso` once, then `aws sso login`
 before each session.
