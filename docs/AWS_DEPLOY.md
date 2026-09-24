@@ -333,6 +333,7 @@ using.
 | Symptom | Cause and fix |
 |---|---|
 | `Docker is installed but not running` | Start Docker Desktop and wait for it to show "running". |
+| `sam build` says `Running AWS SAM projects locally requires a container runtime` while Docker is running | SAM can't find Docker's socket. `git pull` for the latest `deploy.sh`, which detects it, or run `export DOCKER_HOST="unix://$HOME/.docker/run/docker.sock"` first. Permanent fix: Docker Desktop → Settings → Advanced → tick **Allow the default Docker socket to be used**. |
 | `sam build` is very slow or errors on Apple Silicon | Turn on Rosetta emulation in Docker Desktop (Step 1) and restart Docker. |
 | `Unable to locate credentials` or `ExpiredToken` | Run `aws configure`, or `aws sso login` if you use SSO. Check `AWS_PROFILE` is set if you use a named profile. |
 | `AccessDenied` for some service during deploy | Your user lacks a permission. Use an admin user or role for deploying. |

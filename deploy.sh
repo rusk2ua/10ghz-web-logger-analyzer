@@ -30,6 +30,14 @@ command -v aws >/dev/null    || fail "AWS CLI not found (https://aws.amazon.com/
 command -v sam >/dev/null    || fail "AWS SAM CLI not found (brew install aws-sam-cli, or pip install aws-sam-cli)."
 command -v docker >/dev/null || fail "Docker not found -- it's needed to build the Lambda image."
 docker info >/dev/null 2>&1  || fail "Docker is installed but not running. Start Docker Desktop and retry."
+# SAM talks to Docker through DOCKER_HOST or /var/run/docker.sock only, but
+# Docker Desktop (unless its "default Docker socket" option is on) listens on
+# a per-user socket reached through the docker CLI's context. Point SAM at
+# whatever endpoint the docker CLI is actually using.
+if [[ -z "${DOCKER_HOST:-}" && ! -S /var/run/docker.sock ]]; then
+  DOCKER_HOST=$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)
+  [[ -n "$DOCKER_HOST" ]] && export DOCKER_HOST && echo "Using Docker at $DOCKER_HOST"
+fi
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) \
   || fail "AWS credentials not configured. Run 'aws configure' (or 'aws sso login')."
 say "Deploying stack '$STACK_NAME' to account $ACCOUNT in $REGION"
