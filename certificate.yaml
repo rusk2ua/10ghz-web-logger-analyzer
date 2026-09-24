@@ -1,0 +1,61 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ACM certificate for the ARRL 10 GHz log analyzer's custom domain.
+  CloudFront only accepts certificates from us-east-1, so this stack MUST be
+  deployed in us-east-1 even though the app itself runs in us-east-2.
+  Validation is by DNS: CloudFormation adds the validation CNAME(s) to your
+  Route 53 hosted zone automatically, and the stack finishes once ACM has
+  issued the certificate (usually 2-10 minutes).
+
+  Deploy (deploy.sh does this for you when DOMAIN_NAME is set):
+    aws cloudformation deploy --region us-east-1 \
+      --stack-name arrl-10ghz-web-cert --template-file certificate.yaml \
+      --parameter-overrides DomainName=10ghz.microwavedx.com HostedZoneId=Z123EXAMPLE
+
+Parameters:
+  DomainName:
+    Type: String
+    Description: Host name to secure, e.g. 10ghz.microwavedx.com or microwavedx.com
+  AlternateDomainName:
+    Type: String
+    Default: ''
+    Description: Optional second host name on the same certificate, e.g. www.microwavedx.com
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+    Description: Route 53 hosted zone ID for the domain (Route 53 console > Hosted zones)
+
+Conditions:
+  HasAlternateDomain: !Not [!Equals [!Ref AlternateDomainName, '']]
+
+Rules:
+  MustBeUsEast1:
+    Assertions:
+      - Assert: !Equals [!Ref AWS::Region, us-east-1]
+        AssertDescription: CloudFront certificates must be created in us-east-1.
+
+Resources:
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      SubjectAlternativeNames: !If
+        - HasAlternateDomain
+        - [!Ref AlternateDomainName]
+        - !Ref AWS::NoValue
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+        - !If
+          - HasAlternateDomain
+          - DomainName: !Ref AlternateDomainName
+            HostedZoneId: !Ref HostedZoneId
+          - !Ref AWS::NoValue
+      Tags:
+        - Key: app
+          Value: arrl-10ghz-web
+
+Outputs:
+  CertificateArn:
+    Description: Pass this to the main stack's CertificateArn parameter
+    Value: !Ref Certificate

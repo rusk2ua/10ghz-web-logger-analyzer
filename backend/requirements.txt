@@ -1,0 +1,9 @@
+# Runtime dependencies for the Lambda container image.
+# Upstream (backend/app/analyzer/upstream-requirements.txt) lists these
+# unpinned; they're pinned here so deployments are reproducible.
+pandas==2.2.3
+numpy==2.2.6
+matplotlib==3.10.3
+requests==2.32.4
+# boto3 ships in the Lambda base image; pinned so local runs match.
+boto3==1.38.46

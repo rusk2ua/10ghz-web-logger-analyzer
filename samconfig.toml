@@ -1,0 +1,16 @@
+version = 0.1
+
+[default.global.parameters]
+stack_name = "arrl-10ghz-web"
+
+[default.build.parameters]
+cached = true
+
+[default.deploy.parameters]
+region = "us-east-2"
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+resolve_image_repos = true
+confirm_changeset = false
+fail_on_empty_changeset = false
+tags = "app=arrl-10ghz-web"

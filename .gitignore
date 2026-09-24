@@ -1,43 +1,25 @@
-# Dependencies
-node_modules/
-*.log
-npm-debug.log*
-
-# CDK
-cdk.out/
-*.d.ts
-*.js
-*.js.map
-
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
+*.py[cod]
 .venv/
-pip-log.txt
-pip-delete-this-directory.txt
+venv/
+env/
+.pytest_cache/
 
-# Lambda layers
-lambda/layers/python/python/
+# AWS SAM build output
+.aws-sam/
+samconfig.local.toml
 
-# IDE
+# Local dev server output
+local-output/
+
+# Editors / OS
 .vscode/
 .idea/
 *.swp
-*.swo
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Temporary files
-*.tmp
-*.temp
-
-# Environment variables
+# Secrets
 .env
-.env.local
+.env.*
