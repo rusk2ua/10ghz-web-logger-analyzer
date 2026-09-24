@@ -39,6 +39,11 @@ Browser ──► CloudFront (HTTPS, security headers, optional microwavedx.com 
 | `dev/local_server.py` | Runs the full app locally, without AWS |
 | `tests/` | pytest suite, including a web-vs-CLI parity test |
 
+## Step-by-step guides
+
+- [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md): run the app on your computer in a virtual environment
+- [docs/AWS_DEPLOY.md](docs/AWS_DEPLOY.md): deploy to AWS, including the microwavedx.com domain
+
 ## Run it locally
 
 Needs Python 3.11+.
