@@ -14,6 +14,9 @@ The web app runs the CLI project's own scripts, vendored unmodified, so its scor
 reports are identical to the command-line version. Currently vendored: **v1.6.0** (see
 `backend/app/analyzer/UPSTREAM.txt`).
 
+**Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
+**v2.0.0**. See the [version history](#version-history).
+
 ## Architecture
 
 ```
@@ -229,7 +232,69 @@ HTTP 400 with a readable `message`.
 
 ## Known limitations
 
-- Call signs with a `/` suffix (e.g. `K2UA/R`) aren't accepted yet. The upstream scripts use
-  the call sign in output file names.
+- Call signs with a `/` suffix (e.g. `K2UA/R`) aren't accepted, because the upstream
+  scripts put the call sign in output file names. The 10 GHz and Up Contest has no rover
+  category, so this only matters if support for the ARRL VHF contests is added later.
 - Processing must finish within API Gateway's 30-second limit. That's plenty for a contest
   log (the sample takes about 1 s), but a huge log with every plot type could get close.
+
+## Version history
+
+### v2.0.0 (2026-09-24): rebuild on the upstream analyzer; live on microwavedx.com
+
+A ground-up rebuild so the website runs the same code as the command-line analyzer.
+([PR #1](https://github.com/rusk2ua/10ghz-web-logger-analyzer/pull/1))
+
+**Analysis now matches the CLI exactly**
+- The Lambda runs the unmodified
+  [10ghz-log-analyzer](https://github.com/rusk2ua/10ghz-log-analyzer) **v1.6.0** scripts
+  through a small adapter (`backend/app/runner.py`), replacing the hand-written copy of the
+  analysis that had drifted from the CLI.
+- Correct scoring: distance points × band multiplier, plus 100 points per unique call per
+  band. The old version scored QSOs × bands.
+- Bad or unreadable logs now return a clear error message. The old version quietly fell
+  back to built-in sample data and reported success.
+- `scripts/sync-upstream.sh` pulls in future CLI releases, and a test checks that the web
+  output matches the CLI byte for byte.
+
+**New features**
+- All v1.6.0 outputs: Cabrillo log, contest summary, station, weekend and comprehensive
+  reports, directional polar plots per contest day **and per operating location**, and
+  2–4 log comparison.
+- Band category setting (automatic, 10G or ALL).
+- Download everything as one .zip, and view processing notes (scoring breakdown and
+  duplicate check).
+- Rewritten page: drag-and-drop upload, one-click sample logs, plot thumbnails, dark mode,
+  and a phone-friendly layout.
+
+**Infrastructure and security**
+- AWS CDK (TypeScript) replaced by an AWS SAM / CloudFormation YAML template
+  (`template.yaml`), with a container-image Lambda (Python 3.12).
+- Private S3 buckets. The site is served through CloudFront Origin Access Control; results
+  download through 1-hour links and are deleted after a day. Both buckets were previously
+  public.
+- Abuse and cost controls: API rate limiting, a Lambda concurrency cap, upload size limits,
+  and an optional AWS Budgets email alert.
+- Security headers (CSP, HSTS, frame denial). Download filenames are sanitized, fixing an
+  issue found by Amazon Q review.
+- Custom domain **10ghz.microwavedx.com**, with an ACM certificate created by
+  `certificate.yaml` and DNS records added in Route 53 automatically.
+- Fixed the site's JavaScript never having been committed (`.gitignore` excluded `*.js`).
+
+**Tooling and docs**
+- `deploy.sh` does the whole deploy in one command, and `verify-deployment.sh` smoke-tests
+  it. `deploy.sh` also finds Docker Desktop's socket for SAM automatically.
+- `dev/local_server.py` runs the full app locally without AWS, and 26 pytest tests cover
+  it.
+- Step-by-step guides: [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md) and
+  [docs/AWS_DEPLOY.md](docs/AWS_DEPLOY.md), including fixes for common Mac problems (old
+  system Python, Intel Homebrew on Apple Silicon, zsh pasting, the Docker socket).
+
+### v1.0.0 (2025-09-26): first web version
+
+- Serverless web front end: an S3 site behind CloudFront, API Gateway, and a Python Lambda,
+  deployed with AWS CDK in us-east-2.
+- Log upload or Google Sheets link. Call sign, grid square, contest year and band category
+  detected automatically from the log.
+- The analysis was a separate, simplified reimplementation of the CLI scripts, which was
+  replaced in v2.0.0.
