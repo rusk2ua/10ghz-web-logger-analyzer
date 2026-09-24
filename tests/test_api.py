@@ -211,3 +211,10 @@ def test_temp_files_cleaned_up(call_api, tmp_path, monkeypatch):
     call_api({"files": [CSV], "callsign": "K2UA", "outputs": ["summary"]})
     call_api({"files": [CSV], "outputs": ["summary"]})  # a 400
     assert list(work.iterdir()) == []
+
+
+def test_download_name_is_header_safe():
+    import storage
+    assert storage.safe_download_name('K2UA_Report_2026"\r\nX-Evil: 1.txt') == "K2UA_Report_2026___X-Evil__1.txt"
+    assert storage.safe_download_name("K2UA_EN91kt_direction_analysis_2026-08-15.png") == \
+        "K2UA_EN91kt_direction_analysis_2026-08-15.png"

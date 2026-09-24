@@ -8,6 +8,7 @@ file from.
 
 import mimetypes
 import os
+import re
 import shutil
 
 CONTENT_TYPES = {
@@ -16,6 +17,13 @@ CONTENT_TYPES = {
     ".png": "image/png",
     ".zip": "application/zip",
 }
+
+
+def safe_download_name(name):
+    """File name that is safe to put in a Content-Disposition header. Output
+    names can include text from the uploaded log (e.g. its last date), so
+    keep only characters that can't break out of the quoted header value."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", name) or "download"
 
 
 def content_type(name):
@@ -37,7 +45,7 @@ class S3Storage:
         )
 
     def save(self, local_path, key):
-        name = os.path.basename(key)
+        name = safe_download_name(os.path.basename(key))
         with open(local_path, "rb") as f:
             self.s3.put_object(
                 Bucket=self.bucket,
