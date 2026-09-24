@@ -83,16 +83,18 @@ If `sam` or `docker` says `command not found`:
   ```
 
 - **`docker`:** open Docker Desktop from Applications and finish its first-time setup
-  until it shows **Engine running**; that step installs the `docker` command. If
-  `~/.docker/bin/docker` exists but `docker` still isn't found, go to Docker Desktop →
-  Settings → Advanced, choose **System (requires password)**, and click Apply & restart.
-  Or add `~/.docker/bin` to your PATH:
+  until it shows **Engine running**. If `docker` still isn't found, Docker Desktop is set
+  to install its tools for your user only (in `~/.docker/bin`). SAM also needs the
+  standard Docker socket at `/var/run/docker.sock`, so switch Docker to system-wide
+  mode:
+  1. Open Docker Desktop → Settings → Advanced.
+  2. Choose **System (requires password)**.
+  3. Tick **Allow the default Docker socket to be used** if it's shown.
+  4. Click **Apply & restart**.
+  5. Quit Terminal completely (Cmd+Q) and reopen it.
 
-  ```bash
-  echo 'export PATH="$HOME/.docker/bin:$PATH"' >> ~/.zprofile
-  ```
-
-  Then open a new terminal.
+  Then `which docker` should print `/usr/local/bin/docker`, and
+  `ls -l /var/run/docker.sock` should list the socket.
 
 ## Step 2: Connect the AWS CLI to your account
 
