@@ -31,31 +31,41 @@ Parameters:
       the host name(s) at CloudFront are created for you.
   ApiRateLimit:
     Type: Number
-    Default: 2
+    Default: 1
     MinValue: 1
-    Description: Steady-state requests per second allowed to /api/process (all users combined).
+    Description: >
+      Steady-state requests per second allowed to /api/process (all users
+      combined). One analysis is one request, so 1/s is plenty for this contest.
   ApiBurstLimit:
     Type: Number
-    Default: 5
+    Default: 2
     MinValue: 1
-    Description: Burst requests allowed to /api/process.
+    Description: Burst requests allowed to /api/process (two people clicking Analyze at once).
   ReservedConcurrency:
     Type: Number
     Default: 0
     MinValue: 0
     Description: >
       Maximum simultaneous Lambda executions (a hard cost cap). 0 = no
-      reservation. New AWS accounts with a 10-execution account limit can't
-      reserve any, so deploy.sh picks this automatically.
+      reservation. deploy.sh sets 3, or 0 on new AWS accounts whose
+      10-execution account limit doesn't allow reserving any.
   AlertEmail:
     Type: String
     Default: ''
-    Description: Optional email address for the monthly AWS budget alert.
+    Description: Optional email address for the monthly budget alerts (app and account).
+  AppBudgetUsd:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    Description: >
+      Monthly budget (USD) for this app alone -- resources tagged
+      app=arrl-10ghz-web. Emails when actual or forecast spend exceeds it.
+      Requires the "app" cost allocation tag to be active (deploy.sh activates it).
   MonthlyBudgetUsd:
     Type: Number
     Default: 10
     MinValue: 1
-    Description: Monthly budget (USD, whole account) that triggers the alert email.
+    Description: Monthly budget (USD, whole account) -- a safety net for any untagged costs.
   ResultRetentionDays:
     Type: Number
     Default: 1
@@ -299,6 +309,31 @@ Resources:
             HostedZoneId: Z2FDTNDATAQYW2  # fixed hosted zone ID for all CloudFront distributions
 
   # ---------------------------------------------------------------- cost guard
+  # Cost of this app only, via its app=arrl-10ghz-web tag.
+  AppBudget:
+    Type: AWS::Budgets::Budget
+    Condition: HasAlertEmail
+    Properties:
+      Budget:
+        BudgetName: !Sub '${AWS::StackName}-app'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: {Amount: !Ref AppBudgetUsd, Unit: USD}
+        CostFilters:
+          TagKeyValue: ['user:app$arrl-10ghz-web']
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+          Subscribers: [{SubscriptionType: EMAIL, Address: !Ref AlertEmail}]
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+          Subscribers: [{SubscriptionType: EMAIL, Address: !Ref AlertEmail}]
+
+  # Whole-account safety net, in case something isn't tagged.
   MonthlyBudget:
     Type: AWS::Budgets::Budget
     Condition: HasAlertEmail
@@ -321,6 +356,9 @@ Resources:
           Subscribers: [{SubscriptionType: EMAIL, Address: !Ref AlertEmail}]
 
 Outputs:
+  ProcessFunctionName:
+    Description: Lambda function name (deploy.sh uses it to find the image repository)
+    Value: !Ref ProcessFunction
   WebsiteURL:
     Description: Public URL of the site
     Value: !If

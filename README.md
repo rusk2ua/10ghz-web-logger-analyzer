@@ -15,7 +15,7 @@ reports are identical to the command-line version. Currently vendored: **v1.6.0*
 `backend/app/analyzer/UPSTREAM.txt`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.0.0**. See the [version history](#version-history).
+**v2.1.0**. See the [version history](#version-history).
 
 ## Architecture
 
@@ -159,30 +159,42 @@ All are optional environment variables for `deploy.sh`:
 | `DOMAIN_NAME` / `ALT_DOMAIN_NAME` | none | Custom host name(s) |
 | `HOSTED_ZONE_ID` | auto-lookup | Route 53 zone, if the lookup can't find it |
 | `CERT_ARN` | created | Use an existing us-east-1 certificate |
-| `ALERT_EMAIL` | none | Email for the AWS Budgets alert |
-| `MONTHLY_BUDGET_USD` | 10 | Budget threshold (whole account) |
-| `RESERVED_CONCURRENCY` | 10, or 0 on small accounts | Max simultaneous Lambda runs |
+| `ALERT_EMAIL` | none | Email for the AWS Budgets alerts (both budgets need it) |
+| `APP_BUDGET_USD` | 5 | Monthly budget for this app alone (tagged resources) |
+| `MONTHLY_BUDGET_USD` | 10 | Whole-account safety-net budget |
+| `RESERVED_CONCURRENCY` | 3, or 0 on small accounts | Max simultaneous Lambda runs |
+| `KEEP_IMAGES` | 3 | Lambda image versions kept in ECR |
 | `AWS_REGION` / `STACK_NAME` | us-east-2 / arrl-10ghz-web | Where to deploy |
 
-API rate limits (2 requests/s, burst 5) and result retention (1 day) are template
+API rate limits (1 request/s, burst 2) and result retention (1 day) are template
 parameters. Change them in `template.yaml` or with `sam deploy --parameter-overrides`.
 
 ### Abuse protection and privacy
 
-- API Gateway throttles `/api/process` (2 req/s, burst 5, across all users).
-- Lambda reserved concurrency caps simultaneous runs (and so cost). Accounts still on the
-  10-execution starter limit can't reserve any; `deploy.sh` detects that and tells you.
+- API Gateway throttles `/api/process` (1 request/s, burst 2, across all users). One
+  analysis is one request, so real users don't notice.
+- Lambda reserved concurrency caps simultaneous runs at 3, which caps the worst-case cost of
+  abuse at roughly $8/day. Accounts still on the 10-execution starter limit can't reserve
+  any; `deploy.sh` detects that and tells you.
 - Uploads are limited to 4 logs of 1 MB each; Google Sheets downloads to 2 MB.
-- Optional AWS Budgets email when spend passes 80% of the budget, or is forecast to exceed it.
+- With `ALERT_EMAIL` set, two AWS Budgets alerts:
+  - **App budget ($5/month):** covers only resources tagged `app=arrl-10ghz-web`, and emails
+    when actual or forecast spend goes over $5. `deploy.sh` activates the `app` cost
+    allocation tag it depends on. AWS may take up to 24 hours to discover a new tag, so a
+    first deploy may need a rerun the next day.
+  - **Account budget ($10/month):** a safety net for anything untagged. It emails at 80% of
+    actual spend or when forecast spend goes over $10.
 - Both S3 buckets are private. Results are reachable only through 1-hour presigned links and
   are deleted after a day. Uploaded logs never leave the Lambda's temp directory.
 - CloudFront adds a strict Content-Security-Policy, HSTS, and anti-framing headers.
 
 ### Cost
 
-For amateur-radio traffic this should stay within the free tier or cost cents per month:
-Lambda runs about 2–10 s at 2 GB per log, and there are small S3, API Gateway, CloudFront,
-and ECR storage charges (~$0.05/month for the image).
+At about 200 uses a year, this costs roughly **$0.10/month, or $1–2/year**. Lambda,
+CloudFront, S3 transfer and logs stay within AWS's permanent free tiers. The only steady
+charge is ECR storage for the Lambda image (about 0.4 GB per version). `deploy.sh` applies a
+lifecycle rule that keeps just the newest 3 images, so that cost can't grow. The Route 53
+hosted zone ($0.50/month) and domain registration belong to the domain, not this app.
 
 ### Migrating from the old CDK version
 
@@ -239,6 +251,20 @@ HTTP 400 with a readable `message`.
   log (the sample takes about 1 s), but a huge log with every plot type could get close.
 
 ## Version history
+
+### v2.1.0 (2026-09-24): tighter cost controls
+
+- **App budget:** a new $5/month AWS Budget covering only this app (resources tagged
+  `app=arrl-10ghz-web`). It emails when actual or forecast spend goes over $5.
+  `deploy.sh` activates the `app` cost allocation tag it relies on. The whole-account
+  $10 budget stays as a safety net.
+- **Image cleanup:** `deploy.sh` applies an ECR lifecycle rule that keeps only the newest 3
+  Lambda images (`KEEP_IMAGES`), so image storage can't grow with every deploy. It also
+  tags the SAM-created repository so the app budget counts it.
+- **Lower limits:** the Lambda concurrency cap drops from 10 to 3, and the API rate limit
+  from 2 requests/s (burst 5) to 1 request/s (burst 2). Worst-case abuse cost drops from
+  about $28/day to about $8/day. Normal use is unaffected: one analysis is one request.
+- New `ProcessFunctionName` stack output, used by `deploy.sh` to find the image repository.
 
 ### v2.0.0 (2026-09-24): rebuild on the upstream analyzer; live on microwavedx.com
 
