@@ -31,6 +31,28 @@ On a Mac with Homebrew:
 brew install awscli aws-sam-cli
 ```
 
+On an Apple Silicon Mac, `which brew` must say `/opt/homebrew/bin/brew`. If `brew` fails
+with `Bad CPU type in executable`, you have an old Intel Homebrew in `/usr/local` (usually
+carried over by Migration Assistant). Install the Apple Silicon version alongside it:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Run the "Next steps" commands the installer prints (they add `/opt/homebrew` to your PATH),
+open a new terminal, and confirm `which brew` shows `/opt/homebrew/bin/brew`.
+
+If you'd rather skip Homebrew, AWS publishes regular macOS `.pkg` installers for both the
+[AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) and
+the [SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html).
+
+On Apple Silicon, also install Rosetta once. Docker uses it to build the Intel (x86_64)
+Lambda image:
+
+```bash
+softwareupdate --install-rosetta --agree-to-license
+```
+
 Then install **Docker Desktop** from docker.com and start it. On Apple Silicon Macs, open
 Docker Desktop → Settings → General and turn on **"Use Rosetta for x86_64/amd64
 emulation"**. The Lambda image is built for Intel (x86_64), and Rosetta makes that build

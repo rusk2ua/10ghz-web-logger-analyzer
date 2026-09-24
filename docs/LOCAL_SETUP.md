@@ -12,8 +12,11 @@ You need **Git** and **Python 3.11 or newer**. Check with:
 python3 --version
 ```
 
-If that shows 3.10 or older (macOS ships 3.9), install a newer Python first. On a Mac,
-`brew install python@3.12` works (or use the installer from python.org); then use
+If that shows 3.10 or older (macOS ships 3.9), install a newer Python first. The simplest
+way on a Mac is the **macOS 64-bit universal2 installer** for Python 3.12 from
+[python.org/downloads/macos](https://www.python.org/downloads/macos/). After it finishes,
+double-click **Install Certificates.command** in the Finder window it opens, then open a
+new terminal. (`brew install python@3.12` also works if your Homebrew is healthy.) Then use
 `python3.12` wherever these steps say `python3`. **Check this before Step 2**: a venv
 keeps the Python it was created with, so a 3.9 venv can't install the dependencies.
 
@@ -140,6 +143,7 @@ Re-run `pip install -r requirements-dev.txt` only if `backend/requirements.txt` 
 |---|---|
 | `Address already in use` | Something else has port 8000. Run `python dev/local_server.py --port 8001` and open that port. |
 | `Requires-Python >=3.10` or `No matching distribution found for numpy==2.2.6` during Step 3, often with `cp39` in the file names | The venv was made with an old Python (macOS ships 3.9). Rebuild it with a newer one: `deactivate; rm -rf .venv; brew install python@3.12; python3.12 -m venv .venv; source .venv/bin/activate`, then redo Step 3. |
+| `brew` fails with `Bad CPU type in executable` (and possibly `'git' must be installed`) | An Intel-only Homebrew in `/usr/local` on an Apple Silicon Mac, usually carried over by Migration Assistant. Use the python.org installer instead (see [Before you start](#before-you-start)). To fix Homebrew, install the Apple Silicon version, which goes to `/opt/homebrew`; see [AWS_DEPLOY.md](AWS_DEPLOY.md#step-1-install-the-tools-one-time). |
 | `python3: command not found` or version below 3.11 | Install a newer Python (see [Before you start](#before-you-start)), then delete and recreate `.venv` with it. |
 | `No module named pandas` (or similar) | The venv isn't active. Run `source .venv/bin/activate`. |
 | pip install fails compiling numpy or pandas | Your pip is too old to find prebuilt wheels. Run `pip install --upgrade pip`, then retry. |
