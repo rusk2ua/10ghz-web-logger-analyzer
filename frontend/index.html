@@ -1,160 +1,153 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ARRL 10 GHz Contest Logger</title>
-    <link rel="stylesheet" href="styles.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARRL 10 GHz Log Analyzer</title>
+  <meta name="description" content="Convert and analyze your ARRL 10 GHz and Up Contest log: Cabrillo file, score summary, station, weekend and directional analysis.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
 </head>
-
 <body>
-    <header class="header">
-        <h1>ARRL 10 GHz Contest Logger</h1>
-        <nav class="nav">
-            <a href="#" class="nav-link active">LOG PROCESSING</a>
-            <a href="#" class="nav-link">ANALYSIS</a>
-            <a href="#" class="nav-link">COMPARISON</a>
-            <a href="#" class="nav-link">HELP</a>
-        </nav>
-    </header>
+  <header class="header">
+    <div class="header-inner">
+      <h1>ARRL 10 GHz and Up Contest Log Analyzer</h1>
+      <p class="tagline">Cabrillo conversion, scoring and propagation analysis for microwave contest logs</p>
+    </div>
+  </header>
 
-    <main class="main">
-        <div class="container">
-            <h2>Contest Log Processing</h2>
-            <p class="description">
-                Upload your contest log files or provide a Google Sheets URL to generate Cabrillo format files,
-                analysis reports, and visualizations for the ARRL 10 GHz and Up Contest.
-            </p>
+  <main class="main">
+    <form id="processForm" class="card" novalidate>
+      <section class="form-section">
+        <h2><span class="step">1</span> Your log</h2>
 
-            <form id="processForm" class="form">
-                <div class="form-section">
-                    <h3>Step 1 - Input Source</h3>
-
-                    <div class="input-group">
-                        <label class="radio-group">
-                            <input type="radio" name="inputType" value="files" checked>
-                            <span>Upload Log Files</span>
-                        </label>
-                        <label class="radio-group">
-                            <input type="radio" name="inputType" value="sheets">
-                            <span>Google Sheets URL</span>
-                        </label>
-                    </div>
-
-                    <div id="fileUpload" class="upload-section">
-                        <label for="logFiles" class="file-label">Select Log Files:</label>
-                        <input type="file" id="logFiles" name="logFiles" multiple accept=".log,.csv,.txt"
-                            class="file-input">
-                        <div class="file-info">Supported formats: .log, .csv, .txt</div>
-                    </div>
-
-                    <div id="sheetsUrl" class="url-section" style="display: none;">
-                        <label for="googleSheetsUrl" class="input-label">Google Sheets URL:</label>
-                        <input type="url" id="googleSheetsUrl" name="googleSheetsUrl" class="text-input"
-                            placeholder="https://docs.google.com/spreadsheets/d/...">
-                        <div class="input-info">Ensure the sheet is publicly viewable</div>
-                    </div>
-                </div>
-
-                <div class="form-section">
-                    <h3>Step 2 - Contest Information</h3>
-
-                    <!-- Contest year will be automatically extracted from log data -->
-
-                    <div class="form-row">
-                        <div class="form-col">
-                            <label for="stationCategory" class="input-label">Station Category:</label>
-                            <select id="stationCategory" name="stationCategory" class="select-input">
-                                <option value="FIXED">Fixed</option>
-                                <option value="MOBILE">Mobile</option>
-                                <option value="PORTABLE">Portable</option>
-                            </select>
-                        </div>
-                        <div class="form-col">
-                            <label for="power" class="input-label">Power (watts):</label>
-                            <input type="number" id="power" name="power" class="text-input" min="1" max="1500">
-                        </div>
-                    </div>
-
-                    <div class="info-section">
-                        <p><strong>Note:</strong> Callsign, grid square, and contest year will be automatically extracted from your log data. 
-                        Contest category (10 GHz vs 10 GHz and Up) will be automatically determined based on the bands used in your log.</p>
-                    </div>
-                </div>
-
-                <div class="form-section">
-                    <h3>Step 3 - Output Options</h3>
-
-                    <div class="checkbox-group">
-                        <label class="checkbox-item">
-                            <input type="checkbox" name="outputs" value="cabrillo" checked>
-                            <span>Cabrillo Log File</span>
-                        </label>
-                        <label class="checkbox-item">
-                            <input type="checkbox" name="outputs" value="summary" checked>
-                            <span>Contest Summary</span>
-                        </label>
-                        <label class="checkbox-item">
-                            <input type="checkbox" name="outputs" value="station_report">
-                            <span>Station Activity Report</span>
-                        </label>
-                        <label class="checkbox-item">
-                            <input type="checkbox" name="outputs" value="weekend_analysis">
-                            <span>Weekend Analysis</span>
-                        </label>
-                        <label class="checkbox-item">
-                            <input type="checkbox" name="outputs" value="comprehensive_analysis">
-                            <span>Comprehensive Analysis</span>
-                        </label>
-                        <label class="checkbox-item">
-                            <input type="checkbox" name="outputs" value="directional_viz">
-                            <span>Directional Visualization</span>
-                        </label>
-                        <label class="checkbox-item">
-                            <input type="checkbox" name="outputs" value="comparison" id="comparisonOutput">
-                            <span>Log Comparison (requires multiple files)</span>
-                        </label>
-                    </div>
-                </div>
-
-                <div class="form-actions">
-                    <button type="submit" class="submit-btn" id="submitBtn">Process Contest Log</button>
-                    <button type="reset" class="reset-btn">Reset Form</button>
-                </div>
-            </form>
-
-            <div id="processingStatus" class="status-section" style="display: none;">
-                <div class="status-message">
-                    <div class="spinner"></div>
-                    <span id="statusText">Processing your contest log...</span>
-                </div>
-                <div class="progress-bar">
-                    <div class="progress-fill" id="progressFill"></div>
-                </div>
-            </div>
-
-            <div id="results" class="results-section" style="display: none;">
-                <h3>Processing Complete</h3>
-                <p>Your contest log has been processed successfully. Download your files below:</p>
-                <div id="downloadLinks" class="download-links"></div>
-            </div>
-
-            <div id="errorMessage" class="error-section" style="display: none;">
-                <h3>Processing Error</h3>
-                <p id="errorText"></p>
-            </div>
+        <div class="segmented" role="radiogroup" aria-label="Log source">
+          <label><input type="radio" name="inputType" value="files" checked> Upload log files</label>
+          <label><input type="radio" name="inputType" value="sheets"> Google Sheets link</label>
         </div>
-    </main>
 
-    <footer class="footer">
-        <p>ARRL 10 GHz Contest Logger v1.3.0 |
-            <a href="mailto:support@example.com">Support</a> |
-            <a href="#" onclick="showAbout()">About</a>
-        </p>
-    </footer>
+        <div id="filePanel">
+          <input type="file" id="logFiles" multiple accept=".log,.csv,.txt,.cbr" class="visually-hidden">
+          <label for="logFiles" class="drop-zone" id="dropZone">
+            <strong>Choose log files</strong> or drag them here
+            <span class="hint">Cabrillo (.log) or CSV (.csv / .txt) &middot; up to 4 files, 1 MB each</span>
+          </label>
+          <ul id="fileList" class="file-list" hidden></ul>
+          <p class="hint">
+            No log handy? Try the sample
+            <button type="button" class="link-btn" data-sample="samples/sample_qso_log.csv">CSV log</button> or
+            <button type="button" class="link-btn" data-sample="samples/sample_cabrillo.log">Cabrillo log</button>.
+          </p>
+        </div>
 
-    <script src="script.js"></script>
+        <div id="sheetsPanel" hidden>
+          <label for="sheetsUrl" class="label">Google Sheets link</label>
+          <input type="url" id="sheetsUrl" class="input" placeholder="https://docs.google.com/spreadsheets/d/...">
+          <p class="hint">Share the sheet as <em>Anyone with the link &rarr; Viewer</em>. The first tab is used.</p>
+        </div>
+      </section>
+
+      <section class="form-section">
+        <h2><span class="step">2</span> Station</h2>
+        <div class="row">
+          <div class="col">
+            <label for="callsign" class="label">Your call sign</label>
+            <input type="text" id="callsign" class="input upper" maxlength="10" autocomplete="off" spellcheck="false" placeholder="e.g. K2UA">
+            <p class="hint">Required for CSV and Google Sheets logs. Cabrillo logs use their CALLSIGN: line.</p>
+          </div>
+          <div class="col">
+            <label for="bandCategory" class="label">Band category</label>
+            <select id="bandCategory" class="input">
+              <option value="AUTO">Automatic (from the bands in your log)</option>
+              <option value="10G">10G &ndash; 10 GHz only</option>
+              <option value="ALL">ALL &ndash; all bands</option>
+            </select>
+            <p class="hint">Operator (single-op) and mode (mixed) are fixed for this contest.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="form-section">
+        <h2><span class="step">3</span> What to generate</h2>
+        <div class="options">
+          <label class="option"><input type="checkbox" name="outputs" value="cabrillo" checked>
+            <span><strong>Cabrillo log</strong><small>Ready to submit to ARRL, with claimed score</small></span></label>
+          <label class="option"><input type="checkbox" name="outputs" value="summary" checked>
+            <span><strong>Contest summary</strong><small>Score by band: QSOs, points, unique calls, best DX</small></span></label>
+          <label class="option"><input type="checkbox" name="outputs" value="station_report">
+            <span><strong>Station activity report</strong><small>Every station worked, per band, with best DX</small></span></label>
+          <label class="option"><input type="checkbox" name="outputs" value="weekend_analysis">
+            <span><strong>Weekend analysis</strong><small>Day-by-day hourly, directional and band breakdown</small></span></label>
+          <label class="option"><input type="checkbox" name="outputs" value="comprehensive_analysis">
+            <span><strong>Comprehensive analysis</strong><small>Full QSO list with distances and bearings, plus all statistics</small></span></label>
+          <label class="option"><input type="checkbox" name="outputs" value="directional_viz" checked>
+            <span><strong>Directional plots &ndash; per contest day</strong><small>Polar plots of points by compass bearing and band</small></span></label>
+          <label class="option"><input type="checkbox" name="outputs" value="directional_location">
+            <span><strong>Directional plots &ndash; per operating location</strong><small>One plot per grid per date &ndash; great for rovers</small></span></label>
+          <label class="option" id="comparisonOption"><input type="checkbox" name="outputs" value="comparison">
+            <span><strong>Log comparison</strong><small>Side-by-side comparison of 2&ndash;4 uploaded logs</small></span></label>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button type="submit" class="btn primary" id="submitBtn">Analyze log</button>
+        <button type="reset" class="btn secondary" id="resetBtn">Start over</button>
+      </div>
+    </form>
+
+    <section id="status" class="card status" hidden aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <span id="statusText">Crunching your log&hellip;</span>
+    </section>
+
+    <section id="errorBox" class="card error" hidden role="alert">
+      <h2>Couldn&rsquo;t process that log</h2>
+      <p id="errorText"></p>
+    </section>
+
+    <section id="results" class="card" hidden>
+      <div class="results-head">
+        <h2>Your results</h2>
+        <a id="zipLink" class="btn primary" href="#">Download everything (.zip)</a>
+      </div>
+      <div id="logSummary" class="log-summary"></div>
+      <div id="partialErrors" class="warn" hidden></div>
+      <div id="fileGroups"></div>
+      <details id="notesBox" class="notes" hidden>
+        <summary>Processing notes (scoring breakdown, duplicate check, warnings)</summary>
+        <div id="notes"></div>
+      </details>
+      <p class="hint">Download links expire in 1 hour; files are deleted from the server within a day.</p>
+    </section>
+
+    <section class="card help" id="help">
+      <h2>Log formats</h2>
+      <p><strong>Cabrillo (.log)</strong> &ndash; the standard contest submission format. QSO lines look like
+        <code>QSO: 10G CW 2026-08-15 1005 K2UA EN91KT KB8VAO EN91IS</code>.</p>
+      <p><strong>CSV (.csv), or a Google Sheet</strong> &ndash; one row per QSO with the columns
+        <code>date, band, sourcegrid, time, call, grid</code>:</p>
+      <pre>date,band,sourcegrid,time,call,grid
+2026-08-15,10 GHz,EN91KT,1005,KB8VAO,EN91IS
+,,,1032,W3XYZ,EN90OV
+,24 GHz,,1145,K1ROV,EN90UX</pre>
+      <p>Leave <code>date</code>, <code>band</code>, <code>sourcegrid</code> and <code>time</code> blank when they
+        haven&rsquo;t changed since the previous row &ndash; they&rsquo;re filled down automatically. <code>call</code> and
+        <code>grid</code> must be on every row. Dates may be YYYY-MM-DD or MM/DD/YYYY; times are UTC HHMM.</p>
+      <h2>Scoring</h2>
+      <p>Distance points (km, rounded up, minimum 1) &times; band multiplier (10 GHz &times;1, 24 &times;2, 47 &times;3,
+        78 &times;4, 122 &times;5, 142 &times;6, 241+ &times;10), plus 100 points per unique call per band.</p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>
+      Runs the open-source <a href="https://github.com/rusk2ua/10ghz-log-analyzer" rel="noopener">10ghz-log-analyzer</a>
+      <span id="upstreamVersion"></span> by K2UA &middot;
+      <a href="https://github.com/rusk2ua/10ghz-web-logger-analyzer" rel="noopener">Source &amp; issues</a> &middot;
+      Not affiliated with the ARRL. Your logs are used only to generate your results.
+    </p>
+  </footer>
+
+  <script src="app.js"></script>
 </body>
-
 </html>

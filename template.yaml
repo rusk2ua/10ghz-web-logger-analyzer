@@ -1,0 +1,346 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  ARRL 10 GHz and Up Contest Log Analyzer - web front end for the
+  rusk2ua/10ghz-log-analyzer scripts. Static site on S3 + CloudFront,
+  /api/process on HTTP API + a container-image Lambda. Deploy with deploy.sh.
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: ''
+    Description: >
+      Optional custom host name for the site (e.g. 10ghz.microwavedx.com or
+      microwavedx.com). Leave blank to use the *.cloudfront.net URL only.
+  AlternateDomainName:
+    Type: String
+    Default: ''
+    Description: Optional second host name on the same certificate (e.g. www.microwavedx.com).
+  CertificateArn:
+    Type: String
+    Default: ''
+    Description: >
+      ARN of an ACM certificate in us-east-1 covering DomainName (and
+      AlternateDomainName). Create it with certificate.yaml. Required when
+      DomainName is set.
+  HostedZoneId:
+    Type: String
+    Default: ''
+    Description: >
+      Route 53 hosted zone ID for the domain. When set, alias records pointing
+      the host name(s) at CloudFront are created for you.
+  ApiRateLimit:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    Description: Steady-state requests per second allowed to /api/process (all users combined).
+  ApiBurstLimit:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    Description: Burst requests allowed to /api/process.
+  ReservedConcurrency:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: >
+      Maximum simultaneous Lambda executions (a hard cost cap). 0 = no
+      reservation. New AWS accounts with a 10-execution account limit can't
+      reserve any, so deploy.sh picks this automatically.
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: Optional email address for the monthly AWS budget alert.
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    Description: Monthly budget (USD, whole account) that triggers the alert email.
+  ResultRetentionDays:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    Description: Days before uploaded results are deleted from the results bucket.
+
+Conditions:
+  HasDomain: !Not [!Equals [!Ref DomainName, '']]
+  HasAlternateDomain: !And
+    - !Condition HasDomain
+    - !Not [!Equals [!Ref AlternateDomainName, '']]
+  HasDns: !And
+    - !Condition HasDomain
+    - !Not [!Equals [!Ref HostedZoneId, '']]
+  HasAlternateDns: !And
+    - !Condition HasDns
+    - !Condition HasAlternateDomain
+  HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
+
+Rules:
+  CustomDomainNeedsCertificate:
+    RuleCondition: !Not [!Equals [!Ref DomainName, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref CertificateArn, '']]
+        AssertDescription: CertificateArn (an ACM certificate in us-east-1) is required when DomainName is set.
+
+Resources:
+  # ---------------------------------------------------------------- storage
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ObjectOwnership: BucketOwnerEnforced}]
+
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontRead
+            Effect: Allow
+            Principal: {Service: cloudfront.amazonaws.com}
+            Action: s3:GetObject
+            Resource: !Sub '${WebsiteBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+
+  # Generated reports/plots. Private; users download them through short-lived
+  # presigned URLs, and everything is deleted after ResultRetentionDays.
+  ResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ObjectOwnership: BucketOwnerEnforced}]
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteResults
+            Status: Enabled
+            ExpirationInDays: !Ref ResultRetentionDays
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 1}
+
+  # ---------------------------------------------------------------- API
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Description: ARRL 10 GHz log analyzer API (reached through CloudFront at /api/*)
+      DefaultRouteSettings:
+        ThrottlingRateLimit: !Ref ApiRateLimit
+        ThrottlingBurstLimit: !Ref ApiBurstLimit
+
+  ProcessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 14
+
+  ProcessFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Runs the 10ghz-log-analyzer scripts on an uploaded contest log
+      PackageType: Image
+      Architectures: [x86_64]
+      MemorySize: 2048
+      Timeout: 29  # HTTP API waits at most 30 s
+      ReservedConcurrentExecutions: !If [HasReservedConcurrency, !Ref ReservedConcurrency, !Ref AWS::NoValue]
+      LoggingConfig:
+        LogGroup: !Ref ProcessLogGroup
+      Environment:
+        Variables:
+          STORAGE_MODE: s3
+          RESULTS_BUCKET: !Ref ResultsBucket
+          URL_TTL_SECONDS: '3600'
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [s3:PutObject, s3:GetObject]
+              Resource: !Sub '${ResultsBucket.Arn}/results/*'
+      Events:
+        Process:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /api/process
+            Method: POST
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ./backend
+      DockerTag: python3.12-v1
+
+  # ---------------------------------------------------------------- CDN
+  WebsiteOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-website'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SecurityHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub '${AWS::StackName}-security-headers'
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            Override: true
+            ContentSecurityPolicy: !Sub >-
+              default-src 'self'; script-src 'self'; style-src 'self';
+              img-src 'self' data: https://${ResultsBucket.RegionalDomainName};
+              connect-src 'self'; object-src 'none'; base-uri 'self';
+              form-action 'self'; frame-ancestors 'none'
+          ContentTypeOptions: {Override: true}
+          FrameOptions: {FrameOption: DENY, Override: true}
+          ReferrerPolicy: {ReferrerPolicy: strict-origin-when-cross-origin, Override: true}
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: false
+            Override: true
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: ARRL 10 GHz Contest Log Analyzer
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        DefaultRootObject: index.html
+        Aliases: !If
+          - HasDomain
+          - !If [HasAlternateDomain, [!Ref DomainName, !Ref AlternateDomainName], [!Ref DomainName]]
+          - !Ref AWS::NoValue
+        ViewerCertificate: !If
+          - HasDomain
+          - AcmCertificateArn: !Ref CertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+        Origins:
+          - Id: website
+            DomainName: !GetAtt WebsiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt WebsiteOriginAccessControl.Id
+            S3OriginConfig: {OriginAccessIdentity: ''}
+          - Id: api
+            DomainName: !Sub '${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+              OriginReadTimeout: 30
+        DefaultCacheBehavior:
+          TargetOriginId: website
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized
+          ResponseHeadersPolicyId: !Ref SecurityHeadersPolicy
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # Managed-AllViewerExceptHostHeader
+            ResponseHeadersPolicyId: !Ref SecurityHeadersPolicy
+
+  # ---------------------------------------------------------------- DNS
+  DnsRecords:
+    Type: AWS::Route53::RecordSetGroup
+    Condition: HasDns
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+        - Name: !Ref DomainName
+          Type: A
+          AliasTarget:
+            DNSName: !GetAtt Distribution.DomainName
+            HostedZoneId: Z2FDTNDATAQYW2  # fixed hosted zone ID for all CloudFront distributions
+        - Name: !Ref DomainName
+          Type: AAAA
+          AliasTarget:
+            DNSName: !GetAtt Distribution.DomainName
+            HostedZoneId: Z2FDTNDATAQYW2  # fixed hosted zone ID for all CloudFront distributions
+
+  AlternateDnsRecords:
+    Type: AWS::Route53::RecordSetGroup
+    Condition: HasAlternateDns
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+        - Name: !Ref AlternateDomainName
+          Type: A
+          AliasTarget:
+            DNSName: !GetAtt Distribution.DomainName
+            HostedZoneId: Z2FDTNDATAQYW2  # fixed hosted zone ID for all CloudFront distributions
+        - Name: !Ref AlternateDomainName
+          Type: AAAA
+          AliasTarget:
+            DNSName: !GetAtt Distribution.DomainName
+            HostedZoneId: Z2FDTNDATAQYW2  # fixed hosted zone ID for all CloudFront distributions
+
+  # ---------------------------------------------------------------- cost guard
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Condition: HasAlertEmail
+    Properties:
+      Budget:
+        BudgetName: !Sub '${AWS::StackName}-monthly'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: {Amount: !Ref MonthlyBudgetUsd, Unit: USD}
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+          Subscribers: [{SubscriptionType: EMAIL, Address: !Ref AlertEmail}]
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+          Subscribers: [{SubscriptionType: EMAIL, Address: !Ref AlertEmail}]
+
+Outputs:
+  WebsiteURL:
+    Description: Public URL of the site
+    Value: !If
+      - HasDomain
+      - !Sub 'https://${DomainName}'
+      - !Sub 'https://${Distribution.DomainName}'
+  CloudFrontURL:
+    Description: CloudFront default URL (always works, even with a custom domain)
+    Value: !Sub 'https://${Distribution.DomainName}'
+  CloudFrontDomainName:
+    Description: Point a DNS CNAME/alias here if you manage DNS outside Route 53
+    Value: !GetAtt Distribution.DomainName
+  DistributionId:
+    Description: Used by deploy.sh to invalidate the cache after uploading the site
+    Value: !Ref Distribution
+  WebsiteBucketName:
+    Description: Bucket holding the static site (deploy.sh syncs frontend/ here)
+    Value: !Ref WebsiteBucket
+  ResultsBucketName:
+    Value: !Ref ResultsBucket
+  ApiEndpoint:
+    Description: Direct HTTP API endpoint (the site calls it through CloudFront at /api/process)
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
