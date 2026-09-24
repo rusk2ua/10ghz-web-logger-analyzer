@@ -8,9 +8,11 @@
 #   ALT_DOMAIN_NAME=www.microwavedx.com second host name on the same certificate
 #   HOSTED_ZONE_ID=Z0123...             skip the automatic hosted-zone lookup
 #   CERT_ARN=arn:aws:acm:us-east-1:...  use an existing us-east-1 certificate
-#   ALERT_EMAIL=you@example.com         monthly budget alert
-#   MONTHLY_BUDGET_USD=10
-#   RESERVED_CONCURRENCY=10             Lambda concurrency cap (auto-detected if unset)
+#   ALERT_EMAIL=you@example.com         app and account budget alerts
+#   APP_BUDGET_USD=5                    monthly budget for this app alone
+#   MONTHLY_BUDGET_USD=10               whole-account safety-net budget
+#   RESERVED_CONCURRENCY=3              Lambda concurrency cap (auto-detected if unset)
+#   KEEP_IMAGES=3                       Lambda image versions to keep in ECR
 #   AWS_REGION=us-east-2  STACK_NAME=arrl-10ghz-web  AWS_PROFILE=...
 #
 # Needs: AWS CLI v2, AWS SAM CLI, and a running Docker (or Finch/Podman with a
@@ -79,7 +81,7 @@ if [[ -z "${RESERVED_CONCURRENCY:-}" ]]; then
   limit=$(aws lambda get-account-settings --region "$REGION" \
     --query AccountLimit.ConcurrentExecutions --output text)
   if (( limit >= 100 )); then
-    RESERVED_CONCURRENCY=10
+    RESERVED_CONCURRENCY=3
   else
     RESERVED_CONCURRENCY=0
     echo "NOTE: this account's Lambda concurrency limit is $limit, too low to reserve any."
@@ -95,6 +97,7 @@ sam build
 say "Deploying the CloudFormation stack"
 params=(
   "ReservedConcurrency=$RESERVED_CONCURRENCY"
+  "AppBudgetUsd=${APP_BUDGET_USD:-5}"
   "MonthlyBudgetUsd=${MONTHLY_BUDGET_USD:-10}"
 )
 [[ -n "${DOMAIN_NAME:-}" ]]     && params+=("DomainName=$DOMAIN_NAME" "CertificateArn=$CERT_ARN" "HostedZoneId=$HOSTED_ZONE_ID")
@@ -120,6 +123,40 @@ aws s3 sync frontend/ "s3://$BUCKET/" --delete --exclude "*" --include "*.html" 
 say "Invalidating the CloudFront cache"
 aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" --paths "/*" \
   --query Invalidation.Id --output text
+
+# ------------------------------------------------------------------ cost housekeeping
+# SAM creates the image repository in its own companion stack, so it isn't in
+# template.yaml. Every deploy pushes a new ~0.4 GB image; keep only the newest
+# few (the one Lambda runs is always the newest), and tag the repository so
+# the app budget counts it. Non-fatal: the site is already deployed by now.
+tidy_images() {
+  local image_uri repo repo_arn keep="${KEEP_IMAGES:-3}"
+  image_uri=$(aws lambda get-function --region "$REGION" \
+    --function-name "$(output ProcessFunctionName)" --query Code.ImageUri --output text) || return 1
+  repo=${image_uri#*/}; repo=${repo%%@*}; repo=${repo%%:*}
+  repo_arn=$(aws ecr describe-repositories --region "$REGION" --repository-names "$repo" \
+    --query 'repositories[0].repositoryArn' --output text) || return 1
+  aws ecr put-lifecycle-policy --region "$REGION" --repository-name "$repo" \
+    --lifecycle-policy-text "{\"rules\":[{\"rulePriority\":1,\"description\":\"Keep the newest $keep images\",\"selection\":{\"tagStatus\":\"any\",\"countType\":\"imageCountMoreThan\",\"countNumber\":$keep},\"action\":{\"type\":\"expire\"}}]}" \
+    >/dev/null || return 1
+  aws ecr tag-resource --region "$REGION" --resource-arn "$repo_arn" \
+    --tags Key=app,Value=arrl-10ghz-web || return 1
+  echo "    $repo: keeping the newest $keep images"
+}
+say "Tidying the Lambda image repository"
+tidy_images || echo "WARNING: couldn't set the image cleanup rule; the site is deployed, rerun ./deploy.sh later."
+
+# The app budget filters on the app=arrl-10ghz-web tag, which only works once
+# "app" is an active cost allocation tag. AWS can take up to 24 hours after the
+# first deploy to discover a new tag, so this may need a later rerun.
+if aws ce update-cost-allocation-tags-status --region us-east-1 \
+     --cost-allocation-tags-status TagKey=app,Status=Active >/dev/null 2>&1; then
+  echo "    'app' cost allocation tag is active (the app budget can see this app's costs)"
+else
+  echo "NOTE: couldn't activate the 'app' cost allocation tag yet -- AWS may not have"
+  echo "      discovered it. Rerun ./deploy.sh tomorrow, or activate it under"
+  echo "      Billing > Cost allocation tags. Until then the app budget reads \$0."
+fi
 
 say "Done!  $URL"
 echo "    (a brand-new CloudFront distribution can take ~5-10 minutes to answer everywhere)"

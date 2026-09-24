@@ -127,7 +127,7 @@ You should see your account number. If you use a named profile, run
 aws lambda get-account-settings --region us-east-2 --query AccountLimit.ConcurrentExecutions
 ```
 
-- **1000:** `deploy.sh` will cap the app at 10 simultaneous runs.
+- **100 or more** (typically 1000): `deploy.sh` will cap the app at 3 simultaneous runs.
 - **10:** your account is on the new-account limit. The deploy still works, but without the
   concurrency cap; the API rate limit still protects you. To enable the cap, request an
   increase to 1000 in the AWS console under Service Quotas → AWS Lambda → Concurrent
@@ -171,9 +171,17 @@ git pull
 ALERT_EMAIL=you@example.com ./deploy.sh
 ```
 
-Use your real address for `ALERT_EMAIL`. It sets up an AWS Budgets email if the whole
-account's spend goes above 80% of $10 in a month, or is forecast to exceed $10. Change the
-threshold with `MONTHLY_BUDGET_USD=20`.
+Use your real address for `ALERT_EMAIL`. It sets up two AWS Budgets email alerts:
+
+- **App budget:** emails when this app's actual or forecast spend goes over **$5 a month**.
+  Change the amount with `APP_BUDGET_USD=10`.
+- **Account budget:** a safety net covering the whole account. It emails at 80% of $10
+  actual spend, or when forecast spend goes over $10. Change it with `MONTHLY_BUDGET_USD=20`.
+
+The app budget only counts resources tagged `app=arrl-10ghz-web`, so `deploy.sh` also
+activates `app` as a cost allocation tag. On a first deploy AWS may not have discovered the
+tag yet. If so, `deploy.sh` prints a NOTE; rerun it the next day, or activate the tag under
+Billing → Cost allocation tags.
 
 What you'll see, in order:
 
@@ -309,9 +317,11 @@ aws logs describe-log-groups --region us-east-2 --log-group-name-prefix arrl-10g
 aws logs tail <that-name> --region us-east-2 --follow
 ```
 
-**Costs:** check Billing → Cost Explorer after a week. For ham-radio traffic, expect cents
-a month: ECR storage for the image is about $0.05, and Lambda, S3, API Gateway and
-CloudFront mostly stay within the free tier.
+**Costs:** at about 200 uses a year, expect roughly $0.10 a month. Lambda, S3, API
+Gateway and CloudFront mostly stay within the free tier. The steady charge is ECR storage
+for the Lambda image, and `deploy.sh` keeps only the newest 3 images so it can't grow. To
+see this app's costs alone, open Billing → Cost Explorer and filter by **Tag: app =
+arrl-10ghz-web**.
 
 ## Taking it all down
 
@@ -341,6 +351,7 @@ using.
 | Certificate stack sits for more than 30 minutes | The domain's name servers don't match the hosted zone. Recheck Step 3. |
 | `CNAMEAlreadyExists` | Another CloudFront distribution already claims that host name. Remove it from that distribution, or pick a different host name. |
 | Site gives 403 or old content right after a deploy | CloudFront is still spreading the update. Wait 5–10 minutes and reload with Cmd+Shift+R. |
-| Page says "The analyzer is busy right now" | That's the rate limit working. If real users hit it, raise `ApiRateLimit` and `ApiBurstLimit` in `template.yaml` and redeploy. |
+| Page says "The analyzer is busy right now", or a server error, during heavy use | That's the rate limit (1 request/s, burst 2) or the concurrency cap (3) working. If real users hit it, raise `ApiRateLimit`/`ApiBurstLimit` in `template.yaml`, or run `RESERVED_CONCURRENCY=5 ./deploy.sh`. |
+| `deploy.sh` prints `couldn't activate the 'app' cost allocation tag yet` | AWS hasn't discovered the new tag. This is normal right after a first deploy. Rerun `./deploy.sh` the next day, or activate `app` under Billing → Cost allocation tags. |
 | A very large log returns an error after about 30 seconds | API Gateway's 30-second limit. Untick some plot options and try again. |
 | A stack ends in `ROLLBACK_COMPLETE` | Open CloudFormation → the stack → Events and find the first red `CREATE_FAILED` row for the cause. A stack in `ROLLBACK_COMPLETE` must be deleted before `./deploy.sh` can try again. |
