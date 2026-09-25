@@ -70,6 +70,8 @@ OUTPUT_LABELS = {
     "comparison": "Log comparison",
 }
 
+GRID4_RE = re.compile(r"^[A-R]{2}[0-9]{2}$")
+
 _modules = {}
 
 
@@ -106,6 +108,7 @@ class LogSource:
     bands: list = field(default_factory=list)
     first_date: str = ""
     last_date: str = ""
+    grids: list = field(default_factory=list)  # 4-character operating grids
 
     @property
     def band_category(self):
@@ -147,9 +150,12 @@ def inspect_source(path, label, form_callsign=""):
     bands = [b for b in data_source.BAND_ORDER if b in set(df["band"])]
     bands += sorted(set(map(str, df["band"])) - set(bands))
     dates = sorted(str(d) for d in df["date"].dropna().unique())
+    grids = sorted({g[:4].upper() for g in map(str, df["sourcegrid"].dropna())
+                    if GRID4_RE.match(g[:4].upper())})
     return LogSource(
         label=label, path=path, callsign=callsign, qsos=len(df), bands=bands,
         first_date=dates[0] if dates else "", last_date=dates[-1] if dates else "",
+        grids=grids,
     )
 
 

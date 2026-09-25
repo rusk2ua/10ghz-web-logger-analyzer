@@ -4,9 +4,11 @@
     source .venv/bin/activate
     python dev/local_server.py            # then open http://localhost:8000
 
-Serves frontend/ as the website, sends POST /api/process to the same Lambda
-handler that runs in AWS (backend/app/handler.py), and keeps generated files
-in ./local-output/ (served at /output/) instead of S3.
+Serves frontend/ as the website, sends POST /api/process and /api/ping to the
+same Lambda handler that runs in AWS (backend/app/handler.py), and keeps
+generated files and usage records in ./local-output/ (served at /output/)
+instead of S3. /stats/data.json is rebuilt on every request, so the stats
+dashboard at http://localhost:8000/stats/ is always current.
 """
 
 import argparse
@@ -16,25 +18,29 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND = os.path.join(ROOT, "frontend")
-OUTPUT = os.path.join(ROOT, "local-output")
-
 os.environ.setdefault("STORAGE_MODE", "local")
-os.environ.setdefault("LOCAL_OUTPUT_DIR", OUTPUT)
+os.environ.setdefault("LOCAL_OUTPUT_DIR", os.path.join(ROOT, "local-output"))
+OUTPUT = os.environ["LOCAL_OUTPUT_DIR"]
 sys.path.insert(0, os.path.join(ROOT, "backend", "app"))
 
 import handler  # noqa: E402
+import usage  # noqa: E402
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def translate_path(self, path):
         clean = path.split("?", 1)[0].split("#", 1)[0]
+        if clean == "/stats/data.json":
+            usage.aggregate()
+            return os.path.join(OUTPUT, "stats", "data.json")
         if clean.startswith("/output/"):
             rel = os.path.normpath(clean[len("/output/"):]).lstrip(os.sep)
             return os.path.join(OUTPUT, rel)
         return super().translate_path(path)
 
     def do_POST(self):
-        if self.path.split("?", 1)[0] != "/api/process":
+        path = self.path.split("?", 1)[0]
+        if path not in ("/api/process", "/api/ping"):
             self.send_error(404)
             return
         length = int(self.headers.get("Content-Length") or 0)
@@ -42,7 +48,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(413, "Request too large")
             return
         body = self.rfile.read(length).decode("utf-8", errors="replace")
-        event = {"requestContext": {"http": {"method": "POST"}}, "body": body}
+        event = {"rawPath": path, "body": body, "headers": dict(self.headers),
+                 "requestContext": {"http": {"method": "POST", "sourceIp": self.client_address[0]}}}
         result = handler.handler(event)
         payload = result["body"].encode("utf-8")
         self.send_response(result["statusCode"])

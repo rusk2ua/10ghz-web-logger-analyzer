@@ -309,6 +309,11 @@ git add -A && git commit -m "Sync upstream vX.Y.Z"
 source .env.deploy && ./deploy.sh
 ```
 
+**Usage dashboard:** see how the site is being used at
+https://10ghz.microwavedx.com/stats/ (substitute your own domain if different). It's rebuilt
+daily at 06:15 UTC and after every `./deploy.sh`. The README's Usage dashboard section
+explains what's recorded and how to refresh it by hand.
+
 **Watching the Lambda logs** (useful when someone reports a problem):
 
 ```bash

@@ -121,6 +121,10 @@ Everything the app produces is also saved in the project folder under:
 local-output/results/<random-id>/
 ```
 
+The anonymous usage records for the stats dashboard also live there, under
+`local-output/usage/`. Open **http://localhost:8000/stats/** to see the dashboard; it's
+rebuilt each time you load it.
+
 That folder is git-ignored. Delete it whenever you like with `rm -rf local-output`.
 
 ## Step 8: Stop and clean up

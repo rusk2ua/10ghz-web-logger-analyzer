@@ -144,6 +144,7 @@ Resources:
         Rules:
           - Id: DeleteResults
             Status: Enabled
+            Prefix: results/  # usage/ (dashboard statistics) is kept
             ExpirationInDays: !Ref ResultRetentionDays
             AbortIncompleteMultipartUpload: {DaysAfterInitiation: 1}
 
@@ -155,6 +156,12 @@ Resources:
       DefaultRouteSettings:
         ThrottlingRateLimit: !Ref ApiRateLimit
         ThrottlingBurstLimit: !Ref ApiBurstLimit
+      RouteSettings:
+        # Page-view pings for the stats dashboard: tiny and fast, so allow
+        # more of them than analyses (a burst of visitors shouldn't be lost).
+        POST /api/ping:
+          ThrottlingRateLimit: 5
+          ThrottlingBurstLimit: 10
 
   ProcessLogGroup:
     Type: AWS::Logs::LogGroup
@@ -164,7 +171,7 @@ Resources:
   ProcessFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: Runs the 10ghz-log-analyzer scripts on an uploaded contest log
+      Description: Runs the 10ghz-log-analyzer scripts; also records usage and builds the stats dashboard
       PackageType: Image
       Architectures: [x86_64]
       MemorySize: 2048
@@ -176,12 +183,27 @@ Resources:
         Variables:
           STORAGE_MODE: s3
           RESULTS_BUCKET: !Ref ResultsBucket
+          WEBSITE_BUCKET: !Ref WebsiteBucket
           URL_TTL_SECONDS: '3600'
+          # Salt for the anonymous operator/visitor hashes (the stack's unique id).
+          STATS_SALT: !Select [2, !Split ['/', !Ref AWS::StackId]]
       Policies:
         - Statement:
             - Effect: Allow
               Action: [s3:PutObject, s3:GetObject]
               Resource: !Sub '${ResultsBucket.Arn}/results/*'
+            - Effect: Allow
+              Action: [s3:PutObject, s3:GetObject, s3:DeleteObject]
+              Resource: !Sub '${ResultsBucket.Arn}/usage/*'
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !GetAtt ResultsBucket.Arn
+              Condition:
+                StringLike:
+                  s3:prefix: 'usage/*'
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub '${WebsiteBucket.Arn}/stats/data.json'
       Events:
         Process:
           Type: HttpApi
@@ -189,6 +211,18 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /api/process
             Method: POST
+        Ping:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /api/ping
+            Method: POST
+        DailyStats:
+          Type: Schedule
+          Properties:
+            Description: Rebuild the stats dashboard data (stats/data.json)
+            Schedule: cron(15 6 * * ? *)  # 06:15 UTC = 2:15 AM Eastern (daylight time)
+            Input: '{"action": "aggregate"}'
     Metadata:
       Dockerfile: Dockerfile
       DockerContext: ./backend
