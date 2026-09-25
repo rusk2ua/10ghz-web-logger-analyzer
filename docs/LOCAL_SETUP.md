@@ -60,7 +60,8 @@ pip install --upgrade pip
 pip install -r requirements-dev.txt
 ```
 
-This installs pandas, numpy, matplotlib, requests, boto3, pytest and cfn-lint into
+This installs pandas, numpy, matplotlib, the grid-mapper libraries (cartopy, shapely and
+friends), requests, boto3, pytest and cfn-lint into
 `.venv` only, not your system Python. It takes a minute or two the first time.
 
 ## Step 4: Run the tests
@@ -69,7 +70,8 @@ This installs pandas, numpy, matplotlib, requests, boto3, pytest and cfn-lint in
 pytest
 ```
 
-All tests should pass in about 10 seconds. That confirms the vendored analyzer scripts,
+All tests should pass in under a minute. The first run takes longer: the map tests download
+about 36 MB of Natural Earth coastline data, which is then cached for later runs. That confirms the vendored analyzer scripts,
 the web handler, and the web-vs-CLI parity check all work on your machine.
 
 Optionally, lint the CloudFormation templates. No output means they're clean:
@@ -109,6 +111,10 @@ Leave this terminal running.
    For CSVs, enter your call sign.
 6. **Try the comparison:** load two logs (for example, two years of yours), check
    **Log comparison**, and click Analyze.
+7. **Try the maps:** path maps are on by default. Also tick **Grid maps**, **Interactive HTML
+   versions** or **OpenStreetMap street underlay** under *Maps*. Maps take longer (about
+   10–20 s for the sample), and the status line shows the elapsed time while you wait. Open a
+   downloaded `.html` map in your browser, and hover or tap a station.
 
 Google Sheets works locally as long as your machine can reach docs.google.com. Share the
 sheet as "Anyone with the link can view" and paste the link.

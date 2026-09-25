@@ -1,21 +1,29 @@
 """Lambda entry point.
 
-  POST /api/process   analyze contest logs (below)
-  POST /api/ping      count a home-page visit for the stats dashboard
-  {"action": "aggregate"} (daily schedule)  rebuild the stats dashboard data
+  POST /api/process          validate a request and start a background job (202 + jobId)
+  GET  /api/jobs/{jobId}     job state: queued, running, done (with result) or error
+  POST /api/ping             count a home-page visit for the stats dashboard
+  {"action": "run_job"}      (async self-invocation) run one analysis job
+  {"action": "aggregate"}    (daily schedule) rebuild the stats dashboard data
 
-POST /api/process
+Analyses can take minutes (grid-mapper maps for a rover log), longer than API
+Gateway's 30 s limit, so /api/process only validates and queues. The Lambda
+then invokes itself asynchronously to do the work, and the browser polls
+/api/jobs/{jobId}. Job state lives in the results bucket under jobs/ (deleted
+after a day). Locally (STORAGE_MODE=local) jobs run inline.
 
-Request body (JSON):
+POST /api/process request body (JSON):
     {
       "files":        [{"name": "k2ua.csv", "content": "<file text>"}, ...],  # 1-4 logs
       "sheetsUrl":    "https://docs.google.com/spreadsheets/d/...",          # or this
       "callsign":     "K2UA",      # needed for CSV / Google Sheets logs
       "bandCategory": "AUTO",      # AUTO, 10G or ALL
-      "outputs":      ["cabrillo", "summary", ...]
+      "outputs":      ["cabrillo", "summary", "grid_paths", ...],
+      "mapHtml":      false,       # grid-mapper --html (interactive map files)
+      "mapOsm":       false        # grid-mapper --osm-basemap (street underlay)
     }
 
-Response: JSON with download URLs for every generated file plus a .zip of
+A finished job's result: download URLs for every generated file plus a .zip of
 everything, the processing notes each script printed, and per-output errors.
 """
 
@@ -172,7 +180,13 @@ def parse_request(event):
         "callsign": callsign,
         "band_category": band_category,
         "outputs": list(dict.fromkeys(outputs)),
+        "map_options": {"html": bool(req.get("mapHtml")), "osm": bool(req.get("mapOsm"))},
     }
+
+
+def _file_kind(name):
+    ext = os.path.splitext(name)[1].lower()
+    return {".png": "image", ".html": "html"}.get(ext, "text")
 
 
 def process(req, store, workdir, record):
@@ -209,7 +223,8 @@ def process(req, store, workdir, record):
             f"({', '.join(missing_call)})."
         )
 
-    results = runner.run_outputs(sources, req["outputs"], out_dir, req["band_category"])
+    results = runner.run_outputs(sources, req["outputs"], out_dir, req["band_category"],
+                                 req.get("map_options"))
 
     request_id = uuid.uuid4().hex
     prefix = f"results/{request_id}/"
@@ -240,7 +255,7 @@ def process(req, store, workdir, record):
                     "output": result.output,
                     "label": runner.OUTPUT_LABELS[result.output],
                     "source": result.source,
-                    "kind": "image" if name.lower().endswith(".png") else "text",
+                    "kind": _file_kind(name),
                     "size": os.path.getsize(path),
                     "url": store.save(path, prefix + name),
                 })
@@ -265,6 +280,7 @@ def process(req, store, workdir, record):
     return {
         "success": bool(files),
         "upstream": runner.upstream_version().get("version", "unknown"),
+        "gridMapper": runner.upstream_version(runner.GRIDMAPPER_DIR).get("version", "unknown"),
         "logs": [{
             "source": s.label, "callsign": s.callsign, "qsos": s.qsos, "bands": s.bands,
             "firstDate": s.first_date, "lastDate": s.last_date, "bandCategory": s.band_category,
@@ -277,42 +293,136 @@ def process(req, store, workdir, record):
     }
 
 
+# ------------------------------------------------------------------ background jobs
+JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+# A job still "running" this long after it started has died (the Lambda timeout
+# is 900 s); one still "queued" this long never started.
+RUNNING_STALE_SECONDS = 960
+QUEUED_STALE_SECONDS = 1800
+SERVER_ERROR_MESSAGE = ("Something went wrong processing this log. "
+                        "Please try again, or report it if it keeps happening.")
+
+
+def _job_key(job_id, name):
+    return f"jobs/{job_id}/{name}.json"
+
+
+def _set_status(store, job_id, state, **fields):
+    store.put_json(_job_key(job_id, "status"), {"state": state, "updated": time.time(), **fields})
+
+
+def _new_record():
+    return {"upstream": runner.upstream_version().get("version"),
+            "gridMapper": runner.upstream_version(runner.GRIDMAPPER_DIR).get("version")}
+
+
+def _start_async(job_id):
+    import boto3
+    boto3.client("lambda").invoke(
+        FunctionName=os.environ["AWS_LAMBDA_FUNCTION_NAME"],
+        InvocationType="Event",
+        Payload=json.dumps({"action": "run_job", "jobId": job_id}).encode(),
+    )
+
+
+def submit(event):
+    """POST /api/process: validate now (so mistakes come back instantly), then
+    queue the analysis as a background job."""
+    started = time.monotonic()
+    record = _new_record()
+    try:
+        req = parse_request(event)
+    except runner.InputError as e:
+        record.update(status="input_error", error=usage.error_code(e),
+                      duration_ms=int((time.monotonic() - started) * 1000))
+        usage.record_analysis(record)
+        return _response(400, {"success": False, "message": str(e)})
+
+    record.update(
+        source="sheets" if req["sheets_url"] else "files",
+        nLogs=len(req["files"]) + (1 if req["sheets_url"] else 0),
+        outputs=req["outputs"],
+        bandCategory=req["band_category"],
+        mapHtml=req["map_options"]["html"],
+        mapOsm=req["map_options"]["osm"],
+    )
+    job_id = uuid.uuid4().hex
+    store = storage.from_environment()
+    store.put_json(_job_key(job_id, "request"), {"req": req, "record": record})
+    _set_status(store, job_id, "queued")
+    mode = os.environ.get("JOB_MODE") or ("inline" if os.environ.get("STORAGE_MODE") == "local" else "async")
+    try:
+        if mode == "inline":
+            run_job(job_id)
+        else:
+            _start_async(job_id)
+    except Exception:
+        logger.exception("Could not start job %s", job_id)
+        _set_status(store, job_id, "error", statusCode=500, message=SERVER_ERROR_MESSAGE)
+        return _response(500, {"success": False, "message": SERVER_ERROR_MESSAGE})
+    return _response(202, {"success": True, "jobId": job_id})
+
+
+def run_job(job_id):
+    """Run one queued analysis (async self-invocation). Writes the outcome to
+    the job's status document and records anonymous usage."""
+    store = storage.from_environment()
+    job = store.get_json(_job_key(job_id, "request"))
+    req, record = job["req"], job["record"]
+    _set_status(store, job_id, "running")
+    started = time.monotonic()
+    workdir = tempfile.mkdtemp(prefix="req-", dir=os.environ.get("WORK_DIR") or None)
+    try:
+        result = process(req, store, workdir, record)
+        _set_status(store, job_id, "done", statusCode=200, result=result)
+    except runner.InputError as e:
+        record.update(status="input_error", error=usage.error_code(e))
+        _set_status(store, job_id, "error", statusCode=400, message=str(e))
+    except Exception:
+        logger.exception("Job %s failed", job_id)
+        record.update(status="server_error", error="server_error")
+        _set_status(store, job_id, "error", statusCode=500, message=SERVER_ERROR_MESSAGE)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        store.delete(_job_key(job_id, "request"))  # the uploaded logs aren't kept
+        record["duration_ms"] = int((time.monotonic() - started) * 1000)
+        usage.record_analysis(record)
+    return {"jobId": job_id}
+
+
+def job_status(job_id):
+    """GET /api/jobs/{jobId}."""
+    if not JOB_ID_RE.match(job_id):
+        return _response(404, {"state": "error", "message": "Unknown job."})
+    try:
+        status = storage.from_environment().get_json(_job_key(job_id, "status"))
+    except KeyError:
+        return _response(404, {"state": "error", "message": "Unknown or expired job."})
+    age = time.time() - status.get("updated", 0)
+    if (status["state"] == "running" and age > RUNNING_STALE_SECONDS) or \
+            (status["state"] == "queued" and age > QUEUED_STALE_SECONDS):
+        status = {"state": "error", "statusCode": 500,
+                  "message": "This analysis didn't finish. Please try again with fewer outputs, "
+                             "or report it if it keeps happening."}
+    return _response(200, status)
+
+
 def handler(event, context=None):
-    if event.get("action") == "aggregate":  # daily schedule
+    action = event.get("action")
+    if action == "aggregate":  # daily schedule
         return usage.aggregate()
+    if action == "run_job":  # async self-invocation
+        return run_job(event["jobId"])
+
     path = event.get("rawPath") or event.get("path") or ""
     method = (event.get("requestContext", {}).get("http", {}).get("method")
               or event.get("httpMethod") or "POST")
     if method == "OPTIONS":
         return {"statusCode": 204, "body": ""}
+    if method == "GET" and path.startswith("/api/jobs/"):
+        return job_status(path.rsplit("/", 1)[-1])
     if method != "POST":
         return _response(405, {"success": False, "message": "Use POST."})
     if path.endswith("/api/ping"):
         return usage.ping(event)
-
-    started = time.monotonic()
-    record = {"upstream": runner.upstream_version().get("version")}
-    workdir = tempfile.mkdtemp(prefix="req-", dir=os.environ.get("WORK_DIR") or None)
-    try:
-        req = parse_request(event)
-        record.update(
-            source="sheets" if req["sheets_url"] else "files",
-            nLogs=len(req["files"]) + (1 if req["sheets_url"] else 0),
-            outputs=req["outputs"],
-            bandCategory=req["band_category"],
-        )
-        store = storage.from_environment()
-        return _response(200, process(req, store, workdir, record))
-    except runner.InputError as e:
-        record.update(status="input_error", error=usage.error_code(e))
-        return _response(400, {"success": False, "message": str(e)})
-    except Exception:
-        logger.exception("Unhandled error")
-        record.update(status="server_error", error="server_error")
-        return _response(500, {"success": False,
-                               "message": "Something went wrong processing this log. "
-                                          "Please try again, or report it if it keeps happening."})
-    finally:
-        shutil.rmtree(workdir, ignore_errors=True)
-        record["duration_ms"] = int((time.monotonic() - started) * 1000)
-        usage.record_analysis(record)
+    return submit(event)

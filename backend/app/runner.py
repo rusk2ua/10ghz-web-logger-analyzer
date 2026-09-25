@@ -1,4 +1,5 @@
-"""Run the vendored 10ghz-log-analyzer scripts on behalf of a web request.
+"""Run the vendored 10ghz-log-analyzer and grid-mapper scripts on behalf of a
+web request.
 
 The upstream scripts are command-line programs: they read a source from
 sys.argv, may prompt with input(), print progress to stdout, and write their
@@ -28,9 +29,12 @@ from dataclasses import dataclass, field
 os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
-ANALYZER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "analyzer")
-if ANALYZER_DIR not in sys.path:
-    sys.path.insert(0, ANALYZER_DIR)
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+ANALYZER_DIR = os.path.join(APP_DIR, "analyzer")
+GRIDMAPPER_DIR = os.path.join(APP_DIR, "gridmapper")
+for _dir in (GRIDMAPPER_DIR, ANALYZER_DIR):
+    if _dir not in sys.path:
+        sys.path.insert(0, _dir)
 
 import matplotlib  # noqa: E402
 
@@ -57,7 +61,13 @@ SINGLE_LOG_OUTPUTS = {
 MULTI_LOG_OUTPUTS = {
     "comparison": ("log_comparison", [], [r"."]),
 }
-ALL_OUTPUTS = list(SINGLE_LOG_OUTPUTS) + list(MULTI_LOG_OUTPUTS)
+# grid-mapper maps: one maidenhead_map.py run per log produces both kinds (it
+# always draws density maps; --paths adds path maps), sorted out by file name.
+MAP_OUTPUTS = {
+    "grid_density": r"_maidenhead_map\.(png|html)$",
+    "grid_paths": r"_grid_paths_map\.(png|html)$",
+}
+ALL_OUTPUTS = list(SINGLE_LOG_OUTPUTS) + list(MAP_OUTPUTS) + list(MULTI_LOG_OUTPUTS)
 
 OUTPUT_LABELS = {
     "cabrillo": "Cabrillo log",
@@ -68,6 +78,8 @@ OUTPUT_LABELS = {
     "directional_viz": "Directional plots (per contest day)",
     "directional_location": "Directional plots (per operating location)",
     "comparison": "Log comparison",
+    "grid_density": "Grid maps (contacts per grid square)",
+    "grid_paths": "Path maps (lines to each station worked)",
 }
 
 GRID4_RE = re.compile(r"^[A-R]{2}[0-9]{2}$")
@@ -81,11 +93,11 @@ def _module(name):
     return _modules[name]
 
 
-def upstream_version():
+def upstream_version(project_dir=ANALYZER_DIR):
     """Upstream version/commit recorded by scripts/sync-upstream.sh."""
     info = {}
     try:
-        with open(os.path.join(ANALYZER_DIR, "UPSTREAM.txt")) as f:
+        with open(os.path.join(project_dir, "UPSTREAM.txt")) as f:
             for line in f:
                 key, _, value = line.partition(":")
                 info[key.strip()] = value.strip()
@@ -212,16 +224,22 @@ def _fix_unknown_callsign(path, callsign):
     return path
 
 
-def run_outputs(sources, outputs, workdir, band_category="AUTO"):
-    """Run every requested output against the sources. Returns [RunResult]."""
+def run_outputs(sources, outputs, workdir, band_category="AUTO", map_options=None):
+    """Run every requested output against the sources. Returns [RunResult].
+
+    map_options: {"html": bool, "osm": bool} -- grid-mapper's --html and
+    --osm-basemap switches, applied to whichever map outputs are requested.
+    """
     results = []
     single = [o for o in outputs if o in SINGLE_LOG_OUTPUTS]
+    maps = [o for o in outputs if o in MAP_OUTPUTS]
+    map_options = map_options or {}
 
     for index, src in enumerate(sources):
         category = src.band_category if band_category == "AUTO" else band_category
         runs = {}  # (module, extra argv) -> (files, notes, error): run each script once
-        for output in single:
-            module_name, extra, patterns = SINGLE_LOG_OUTPUTS[output]
+
+        def run_once(module_name, extra):
             key = (module_name, tuple(extra))
             if key not in runs:
                 run_dir = os.path.join(workdir, f"src{index}", module_name + "".join(extra))
@@ -229,11 +247,18 @@ def run_outputs(sources, outputs, workdir, band_category="AUTO"):
                                                  callsign=src.callsign, band_category=category)
                 files = [_fix_unknown_callsign(f, src.callsign) for f in files]
                 runs[key] = (files, notes, error)
-            files, notes, error = runs[key]
+            return runs[key]
+
+        for output in single:
+            module_name, extra, patterns = SINGLE_LOG_OUTPUTS[output]
+            files, notes, error = run_once(module_name, extra)
             kept = [f for f in files if any(re.search(p, os.path.basename(f)) for p in patterns)]
             if not kept and not error:
                 error = "No output was produced -- see the processing notes."
             results.append(RunResult(output, src.label, kept, notes, error))
+
+        if maps:
+            results += _run_maps(src, index, maps, map_options, workdir, run_once)
 
     if "comparison" in outputs:
         if len(sources) < 2:
@@ -248,3 +273,36 @@ def run_outputs(sources, outputs, workdir, band_category="AUTO"):
 
     return results
 
+
+def _run_maps(src, index, maps, map_options, workdir, run_once):
+    """Run grid-mapper once for this log and split its files into the
+    requested map outputs. grid-mapper reads Cabrillo (with the operator's
+    grid on every QSO line), so a CSV log is first converted by the upstream
+    Cabrillo converter -- the same file the "cabrillo" output produces."""
+    cabrillo = src.path if src.path.lower().endswith(".log") else None
+    notes = ""
+    if cabrillo is None:
+        files, notes, error = run_once("arrl_10ghz_cabrillo", [])
+        cabrillo = next((f for f in files if f.endswith("_ARRL_10GHZ.log")), None)
+        if cabrillo is None:
+            msg = error or "Couldn't convert this log to Cabrillo for mapping -- see the processing notes."
+            return [RunResult(output, src.label, [], notes, msg) for output in maps]
+
+    argv = [cabrillo]
+    if "grid_paths" in maps:
+        argv.append("--paths")
+    if map_options.get("html"):
+        argv.append("--html")
+    if map_options.get("osm"):
+        argv.append("--osm-basemap")
+    files, notes, error = run_script("maidenhead_map", argv,
+                                     os.path.join(workdir, f"src{index}", "maidenhead_map"))
+
+    results = []
+    for output in maps:
+        kept = [f for f in files if re.search(MAP_OUTPUTS[output], os.path.basename(f))]
+        out_error = error
+        if not kept and not error:
+            out_error = "No map was produced -- see the processing notes."
+        results.append(RunResult(output, src.label, kept, notes, out_error))
+    return results

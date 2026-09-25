@@ -87,6 +87,24 @@
           <label class="option" id="comparisonOption"><input type="checkbox" name="outputs" value="comparison">
             <span><strong>Log comparison</strong><small>Side-by-side comparison of 2&ndash;4 uploaded logs</small></span></label>
         </div>
+
+        <h3 class="subhead">Maps</h3>
+        <div class="options">
+          <label class="option"><input type="checkbox" name="outputs" value="grid_paths" checked>
+            <span><strong>Path maps</strong><small>A line from your grid to each station worked, labeled with call and km</small></span></label>
+          <label class="option"><input type="checkbox" name="outputs" value="grid_density">
+            <span><strong>Grid maps</strong><small>Worked grid squares, shaded by number of contacts</small></span></label>
+        </div>
+        <div class="map-extras" id="mapExtras">
+          <label><input type="checkbox" id="mapHtml">
+            <span><strong>Interactive HTML versions</strong> &ndash; hover or tap a station for call, date and grid
+              (open the downloaded <code>.html</code> file in your browser)</span></label>
+          <label><input type="checkbox" id="mapOsm">
+            <span><strong>OpenStreetMap street underlay</strong> &ndash; roads and towns under the map
+              (adds a few seconds per map)</span></label>
+        </div>
+        <p class="hint">One map per band &ndash; and per operating location for rovers. Maps take longer to make:
+          usually under a minute, a few minutes for a big rover log.</p>
       </section>
 
       <div class="actions">
@@ -97,7 +115,7 @@
 
     <section id="status" class="card status" hidden aria-live="polite">
       <div class="spinner" aria-hidden="true"></div>
-      <span id="statusText">Crunching your log&hellip;</span>
+      <span id="statusText">Sending your log&hellip;</span>
     </section>
 
     <section id="errorBox" class="card error" hidden role="alert">
@@ -133,6 +151,11 @@
       <p>Leave <code>date</code>, <code>band</code>, <code>sourcegrid</code> and <code>time</code> blank when they
         haven&rsquo;t changed since the previous row &ndash; they&rsquo;re filled down automatically. <code>call</code> and
         <code>grid</code> must be on every row. Dates may be YYYY-MM-DD or MM/DD/YYYY; times are UTC HHMM.</p>
+      <h2>Maps</h2>
+      <p>Maps are drawn by K2UA&rsquo;s open-source <a href="https://github.com/rusk2ua/grid-mapper" rel="noopener">grid-mapper</a>.
+        CSV and Google Sheets logs are converted to Cabrillo first, so every map uses the grid you operated from on each QSO.
+        Coastline and border data: <a href="https://www.naturalearthdata.com/" rel="noopener">Natural Earth</a>;
+        street underlay: &copy; <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap</a> contributors.</p>
       <h2>Scoring</h2>
       <p>Distance points (km, rounded up, minimum 1) &times; band multiplier (10 GHz &times;1, 24 &times;2, 47 &times;3,
         78 &times;4, 122 &times;5, 142 &times;6, 241+ &times;10), plus 100 points per unique call per band.</p>
@@ -142,7 +165,9 @@
   <footer class="footer">
     <p>
       Runs the open-source <a href="https://github.com/rusk2ua/10ghz-log-analyzer" rel="noopener">10ghz-log-analyzer</a>
-      <span id="upstreamVersion"></span> by K2UA &middot;
+      <span id="upstreamVersion"></span> and
+      <a href="https://github.com/rusk2ua/grid-mapper" rel="noopener">grid-mapper</a>
+      <span id="gridMapperVersion"></span> by K2UA &middot;
       <a href="https://github.com/rusk2ua/10ghz-web-logger-analyzer" rel="noopener">Source &amp; issues</a> &middot;
       Not affiliated with the ARRL. Your logs are used only to generate your results.
     </p>

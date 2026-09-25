@@ -12,6 +12,8 @@
     directional_viz: 'Directional plots (per day)',
     directional_location: 'Directional plots (per location)',
     comparison: 'Log comparison',
+    grid_paths: 'Path maps',
+    grid_density: 'Grid maps',
   };
   const ERROR_LABELS = {
     callsign: 'Call sign missing or invalid',
@@ -216,6 +218,7 @@
     const allOutputs = Object.keys(OUTPUT_LABELS).map((k) => [k, (d.outputs || {})[k] || 0])
       .sort((a, b) => b[1] - a[1]);
     renderBars('outputs', allOutputs, { total: served, label: (k) => OUTPUT_LABELS[k] || k });
+    renderBars('mapOptions', d.mapOptions || {}, { total: d.mapAnalyses || 0 });
     renderBars('source', d.source);
     renderBars('formats', d.formats);
     renderBars('logsPerRequest', Object.entries(d.logsPerRequest).sort(),

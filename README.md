@@ -1,21 +1,26 @@
 # ARRL 10 GHz and Up Contest Log Analyzer — Web Edition
 
-A public web front end for [rusk2ua/10ghz-log-analyzer](https://github.com/rusk2ua/10ghz-log-analyzer).
-Anyone can upload a contest log (Cabrillo or CSV) or paste a Google Sheets link and get:
+A public web front end for K2UA's [10ghz-log-analyzer](https://github.com/rusk2ua/10ghz-log-analyzer)
+and [grid-mapper](https://github.com/rusk2ua/grid-mapper). Anyone can upload a contest log
+(Cabrillo or CSV) or paste a Google Sheets link and get:
 
 - a **Cabrillo log** ready to submit, with claimed score
 - the **contest summary** (score by band)
 - **station activity**, **weekend**, and **comprehensive** analysis reports
 - **directional polar plots**, per contest day or per operating location (rovers)
 - a **comparison** of 2–4 logs
+- **maps** from grid-mapper: path maps (a line to each station worked, with call and km) and
+  grid-square density maps, per band and per operating location, optionally as interactive
+  HTML and with an OpenStreetMap street underlay
 - a single **.zip** with everything, plus the scoring breakdown and duplicate check
 
-The web app runs the CLI project's own scripts, vendored unmodified, so its scores and
-reports are identical to the command-line version. Currently vendored: **v1.6.0** (see
-`backend/app/analyzer/UPSTREAM.txt`).
+The web app runs both CLI projects' own scripts, vendored unmodified, so its scores,
+reports and maps are identical to the command-line versions. Currently vendored:
+10ghz-log-analyzer **v1.6.0** and grid-mapper **v1.5.0** (see `UPSTREAM.txt` in
+`backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.2.1**. See the [version history](#version-history).
+**v2.3.0**. See the [version history](#version-history).
 
 ## Architecture
 
@@ -23,19 +28,29 @@ reports are identical to the command-line version. Currently vendored: **v1.6.0*
 Browser ──► CloudFront (HTTPS, security headers, optional microwavedx.com cert)
               ├── /*        → S3 website bucket (private, Origin Access Control)
               └── /api/*    → API Gateway HTTP API (rate-limited)
-                                 └── Lambda (container image: Python 3.12 + pandas/matplotlib)
-                                       ├── runs the vendored 10ghz-log-analyzer scripts
+                                 └── Lambda (container image: Python 3.12 + pandas/matplotlib/cartopy)
+                                       │  POST /api/process: validate, queue a job, invoke itself async
+                                       │  GET  /api/jobs/{id}: job status → the browser polls this
+                                       ├── (background) runs the vendored 10ghz-log-analyzer and
+                                       │   grid-mapper scripts — up to 15 minutes per job
                                        └── writes results → private S3 bucket (auto-deleted after 1 day)
                                                             downloaded via 1-hour presigned URLs
 ```
 
+Analyses run as **background jobs** because maps for a big rover log can take minutes, well
+past API Gateway's 30-second limit. `POST /api/process` validates the request (bad input still
+gets an instant error), saves it, and has the Lambda invoke itself asynchronously; the page
+polls `GET /api/jobs/{id}` every couple of seconds until the result is ready.
+
 | Path | What it is |
 |---|---|
 | `frontend/` | Static site (HTML/CSS/JS, no build step) |
-| `backend/app/handler.py` | Lambda entry point: validates the request and packages the results |
+| `backend/app/handler.py` | Lambda entry point: validation, background jobs, packaging the results |
 | `backend/app/runner.py` | Runs each upstream script's `main()` in a sandbox (argv, temp dir, `input()` answers) |
-| `backend/app/analyzer/` | **Vendored** upstream scripts. Don't edit these; run `scripts/sync-upstream.sh` |
-| `backend/Dockerfile` | Lambda container image |
+| `backend/app/analyzer/` | **Vendored** 10ghz-log-analyzer scripts. Don't edit these; run `scripts/sync-upstream.sh` |
+| `backend/app/gridmapper/` | **Vendored** grid-mapper (`maidenhead_map.py`). Same rule |
+| `backend/app/usage.py` | Anonymous usage records and the stats dashboard data |
+| `backend/Dockerfile` | Lambda container image, including the Natural Earth map data |
 | `template.yaml` | AWS SAM / CloudFormation template for the whole app |
 | `certificate.yaml` | ACM certificate for a custom domain (us-east-1) |
 | `deploy.sh`, `verify-deployment.sh` | One-command deploy and a post-deploy smoke test |
@@ -60,7 +75,7 @@ pytest
 python dev/local_server.py
 ```
 
-`pytest` runs the test suite in about 10 seconds. The server runs at http://localhost:8000.
+`pytest` runs the test suite in under a minute (the first run also downloads ~36 MB of map data). The server runs at http://localhost:8000.
 
 The local server serves `frontend/` and routes `POST /api/process` to the same Lambda
 handler that runs in AWS. Generated files go to `./local-output/` instead of S3. Click the
@@ -192,7 +207,8 @@ parameters. Change them in `template.yaml` or with `sam deploy --parameter-overr
 
 ### Cost
 
-At about 200 uses a year, this costs roughly **$0.10/month, or $1–2/year**. Lambda,
+At about 200 uses a year, this costs roughly **$0.10/month, or $1–2/year**. Map jobs use
+more Lambda time (roughly 10–60 s each) but still fit comfortably in the free tier. Lambda,
 CloudFront, S3 transfer and logs stay within AWS's permanent free tiers. The only steady
 charge is ECR storage for the Lambda image (about 0.4 GB per version). `deploy.sh` applies a
 lifecycle rule that keeps just the newest 3 images, so that cost can't grow. The Route 53
@@ -256,27 +272,31 @@ rebuilds it on every load.
 Statistics start from the first request after v2.2.0 is deployed. Nothing earlier was
 recorded.
 
-## Keeping up with the CLI project
+## Keeping up with the CLI projects
 
-When `10ghz-log-analyzer` gets a new release:
+When `10ghz-log-analyzer` or `grid-mapper` gets a new release:
 
 ```bash
 scripts/sync-upstream.sh
-git diff backend/app/analyzer/
+git diff backend/app/analyzer/ backend/app/gridmapper/
 pytest
 ./deploy.sh
 ```
 
-To pin a specific release, pass it to the sync script, e.g. `scripts/sync-upstream.sh v1.7.0`.
-Review the `git diff` of what changed upstream; `pytest` includes the web-vs-CLI parity test.
+With no arguments the sync script refreshes both projects from `main`. To sync one project,
+or pin a release, name it: `scripts/sync-upstream.sh analyzer v1.7.0` or
+`scripts/sync-upstream.sh gridmapper v1.6.0`. Review the `git diff` of what changed
+upstream; `pytest` includes the web-vs-CLI parity test and map tests.
 
 If upstream adds a new script or command-line option, add it to the output tables at the
 top of `backend/app/runner.py` and as a checkbox in `frontend/index.html`. If upstream adds
-a dependency, add it (pinned) to `backend/requirements.txt`.
+a dependency, add it (pinned) to `backend/requirements.txt`. If grid-mapper starts using
+another Natural Earth dataset, add it to `backend/fetch_natural_earth.py` so it's baked into
+the image.
 
 ## API
 
-`POST /api/process` with JSON:
+**1. Submit:** `POST /api/process` with JSON:
 
 ```json
 {
@@ -285,23 +305,58 @@ a dependency, add it (pinned) to `backend/requirements.txt`.
   "callsign": "K2UA",
   "bandCategory": "AUTO",
   "outputs": ["cabrillo", "summary", "station_report", "weekend_analysis",
-              "comprehensive_analysis", "directional_viz", "directional_location", "comparison"]
+              "comprehensive_analysis", "directional_viz", "directional_location", "comparison",
+              "grid_paths", "grid_density"],
+  "mapHtml": false,
+  "mapOsm": false
 }
 ```
 
-The response lists each log's call sign, QSO count and bands, then download URLs for every
-generated file, a .zip, the processing notes, and any per-output errors. Invalid input returns
-HTTP 400 with a readable `message`.
+It returns HTTP 202 with `{"jobId": "..."}`. Input that can be checked immediately (no
+outputs, bad call sign, oversized file) returns HTTP 400 with a readable `message` instead.
+
+**2. Poll:** `GET /api/jobs/{jobId}` returns `{"state": "queued" | "running" | "done" | "error"}`.
+
+- **`done`:** includes `result`, which lists each log's call sign, QSO count and bands, then
+  download URLs for every generated file, a .zip, the processing notes, and any per-output
+  errors.
+- **`error`:** includes a readable `message`. That covers problems found while running, such as
+  a log with no QSOs, and jobs that never finished.
 
 ## Known limitations
 
 - Call signs with a `/` suffix (e.g. `K2UA/R`) aren't accepted, because the upstream
   scripts put the call sign in output file names. The 10 GHz and Up Contest has no rover
   category, so this only matters if support for the ARRL VHF contests is added later.
-- Processing must finish within API Gateway's 30-second limit. That's plenty for a contest
-  log (the sample takes about 1 s), but a huge log with every plot type could get close.
+- A job can run for up to 15 minutes (the Lambda timeout). Even a big rover log with every map
+  option fits comfortably, but a job that runs longer reports an error rather than a partial
+  result.
 
 ## Version history
+
+### v2.3.0 (2026-09-25): grid-mapper maps and background jobs
+
+- **Maps from [grid-mapper](https://github.com/rusk2ua/grid-mapper) v1.5.0**, vendored
+  unmodified in `backend/app/gridmapper/` and run through the same sandboxed adapter:
+  - **Path maps** (on by default): a line from your grid to each station, with call and km.
+  - **Grid maps:** worked squares shaded by contact count.
+  - Maps come one per band, and one per operating location for rovers.
+  - Options for **interactive HTML** versions (downloadable, Leaflet-based) and an
+    **OpenStreetMap street underlay**.
+  - CSV and Google Sheets logs are converted to Cabrillo by the upstream converter first,
+    so maps use the operating grid on every QSO.
+- **Background jobs:** `POST /api/process` now validates and queues (HTTP 202 + `jobId`). The
+  Lambda invokes itself asynchronously to do the work (timeout raised to 15 minutes, no
+  automatic retries), and the page polls `GET /api/jobs/{id}` with a live status. That removes
+  the 30-second API Gateway ceiling. Job documents live under `jobs/` in the results bucket
+  and expire after a day, and the uploaded log is deleted as soon as its job finishes.
+- **Lambda image:** adds cartopy, shapely, pyproj, scipy and Pillow (pinned), and bakes in the
+  Natural Earth coastline/border data (~36 MB) so jobs never download it.
+- **Other:**
+  - `scripts/sync-upstream.sh` now syncs both upstream projects.
+  - The stats dashboard counts map outputs and map options.
+  - `verify-deployment.sh` submits and polls a job that includes a path map.
+- 11 new tests (49 total).
 
 ### v2.2.1 (2026-09-25): fix "Access Denied" on /stats/
 

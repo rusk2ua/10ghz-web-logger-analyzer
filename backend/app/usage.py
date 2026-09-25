@@ -283,6 +283,7 @@ def build_stats(days, today):
         monthly_rows.append(m)
 
     visits = sum(day.get("visits", 0) for day in days.values())
+    with_maps = [a for a in served if any(o.startswith("grid_") for o in a.get("outputs", []))]
     counts = lambda items: dict(Counter(items).most_common())  # noqa: E731
     return {
         "generated": _now().strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -325,6 +326,11 @@ def build_stats(days, today):
         },
         "errors": counts(a.get("error") for a in analyses if a.get("error")),
         "failedOutputs": counts(o for a in served for o in a.get("failedOutputs", [])),
+        "mapAnalyses": len(with_maps),
+        "mapOptions": {
+            "Interactive HTML": sum(1 for a in with_maps if a.get("mapHtml")),
+            "OpenStreetMap underlay": sum(1 for a in with_maps if a.get("mapOsm")),
+        },
     }
 
 

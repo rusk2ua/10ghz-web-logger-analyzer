@@ -147,6 +147,10 @@ Resources:
             Prefix: results/  # usage/ (dashboard statistics) is kept
             ExpirationInDays: !Ref ResultRetentionDays
             AbortIncompleteMultipartUpload: {DaysAfterInitiation: 1}
+          - Id: DeleteJobs
+            Status: Enabled
+            Prefix: jobs/  # background-job status documents
+            ExpirationInDays: 1
 
   # ---------------------------------------------------------------- API
   HttpApi:
@@ -162,6 +166,10 @@ Resources:
         POST /api/ping:
           ThrottlingRateLimit: 5
           ThrottlingBurstLimit: 10
+        # The browser polls a running job every couple of seconds.
+        GET /api/jobs/{jobId}:
+          ThrottlingRateLimit: 10
+          ThrottlingBurstLimit: 20
 
   ProcessLogGroup:
     Type: AWS::Logs::LogGroup
@@ -171,12 +179,17 @@ Resources:
   ProcessFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: Runs the 10ghz-log-analyzer scripts; also records usage and builds the stats dashboard
+      Description: Runs 10ghz-log-analyzer and grid-mapper jobs; also records usage and builds the stats dashboard
       PackageType: Image
       Architectures: [x86_64]
       MemorySize: 2048
-      Timeout: 29  # HTTP API waits at most 30 s
+      # Analyses run as background jobs (the API only queues them and reports
+      # status), so a big rover log's maps can take several minutes.
+      Timeout: 900
       ReservedConcurrentExecutions: !If [HasReservedConcurrency, !Ref ReservedConcurrency, !Ref AWS::NoValue]
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0          # a failed job reports its error; don't re-run it
+        MaximumEventAgeInSeconds: 1800   # a job still queued after 30 min is dropped
       LoggingConfig:
         LogGroup: !Ref ProcessLogGroup
       Environment:
@@ -196,6 +209,14 @@ Resources:
               Action: [s3:PutObject, s3:GetObject, s3:DeleteObject]
               Resource: !Sub '${ResultsBucket.Arn}/usage/*'
             - Effect: Allow
+              Action: [s3:PutObject, s3:GetObject, s3:DeleteObject]
+              Resource: !Sub '${ResultsBucket.Arn}/jobs/*'
+            # Start background jobs by invoking itself asynchronously. (Named by
+            # pattern: referencing the function's own ARN here would be circular.)
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-ProcessFunction*'
+            - Effect: Allow
               Action: s3:ListBucket
               Resource: !GetAtt ResultsBucket.Arn
               Condition:
@@ -211,6 +232,12 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /api/process
             Method: POST
+        JobStatus:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /api/jobs/{jobId}
+            Method: GET
         Ping:
           Type: HttpApi
           Properties:

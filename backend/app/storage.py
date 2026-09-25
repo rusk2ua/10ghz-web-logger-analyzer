@@ -1,11 +1,12 @@
 """Where generated files go: a private S3 bucket (deployed) or a local folder
 (local development). Either way the caller gets back a URL to download each
-file from.
+file from. Also holds background-job state (small JSON documents under jobs/).
 
   STORAGE_MODE=s3     RESULTS_BUCKET=<bucket>   URL_TTL_SECONDS=3600
   STORAGE_MODE=local  LOCAL_OUTPUT_DIR=<dir>    (served at /output/ by dev/local_server.py)
 """
 
+import json
 import mimetypes
 import os
 import re
@@ -15,6 +16,7 @@ CONTENT_TYPES = {
     ".txt": "text/plain; charset=utf-8",
     ".log": "text/plain; charset=utf-8",
     ".png": "image/png",
+    ".html": "text/html; charset=utf-8",
     ".zip": "application/zip",
 }
 
@@ -58,6 +60,20 @@ class S3Storage:
             "get_object", Params={"Bucket": self.bucket, "Key": key}, ExpiresIn=self.ttl
         )
 
+    def put_json(self, key, obj):
+        self.s3.put_object(Bucket=self.bucket, Key=key, Body=json.dumps(obj).encode(),
+                           ContentType="application/json")
+
+    def get_json(self, key):
+        """The JSON document at key; KeyError if there isn't one."""
+        try:
+            return json.loads(self.s3.get_object(Bucket=self.bucket, Key=key)["Body"].read())
+        except self.s3.exceptions.NoSuchKey as e:
+            raise KeyError(key) from e
+
+    def delete(self, key):
+        self.s3.delete_object(Bucket=self.bucket, Key=key)
+
 
 class LocalStorage:
     def __init__(self, root, url_prefix="/output/"):
@@ -69,6 +85,25 @@ class LocalStorage:
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copyfile(local_path, dest)
         return self.url_prefix + key
+
+    def put_json(self, key, obj):
+        dest = os.path.join(self.root, key)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "w") as f:
+            json.dump(obj, f)
+
+    def get_json(self, key):
+        try:
+            with open(os.path.join(self.root, key)) as f:
+                return json.load(f)
+        except FileNotFoundError as e:
+            raise KeyError(key) from e
+
+    def delete(self, key):
+        try:
+            os.remove(os.path.join(self.root, key))
+        except FileNotFoundError:
+            pass
 
 
 def from_environment():

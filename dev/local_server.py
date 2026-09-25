@@ -4,8 +4,10 @@
     source .venv/bin/activate
     python dev/local_server.py            # then open http://localhost:8000
 
-Serves frontend/ as the website, sends POST /api/process and /api/ping to the
-same Lambda handler that runs in AWS (backend/app/handler.py), and keeps
+Serves frontend/ as the website, sends POST /api/process, GET /api/jobs/<id>
+and POST /api/ping to the same Lambda handler that runs in AWS
+(backend/app/handler.py) -- jobs run inline here rather than in the
+background -- and keeps
 generated files and usage records in ./local-output/ (served at /output/)
 instead of S3. /stats/data.json is rebuilt on every request, so the stats
 dashboard at http://localhost:8000/stats/ is always current.
@@ -38,6 +40,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return os.path.join(OUTPUT, rel)
         return super().translate_path(path)
 
+    def do_GET(self):
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/api/jobs/"):
+            self._lambda(path, "GET", "")
+        else:
+            super().do_GET()
+
     def do_POST(self):
         path = self.path.split("?", 1)[0]
         if path not in ("/api/process", "/api/ping"):
@@ -47,9 +56,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if length > handler.MAX_BODY_BYTES + 1000:
             self.send_error(413, "Request too large")
             return
-        body = self.rfile.read(length).decode("utf-8", errors="replace")
+        self._lambda(path, "POST", self.rfile.read(length).decode("utf-8", errors="replace"))
+
+    def _lambda(self, path, method, body):
         event = {"rawPath": path, "body": body, "headers": dict(self.headers),
-                 "requestContext": {"http": {"method": "POST", "sourceIp": self.client_address[0]}}}
+                 "requestContext": {"http": {"method": method, "sourceIp": self.client_address[0]}}}
         result = handler.handler(event)
         payload = result["body"].encode("utf-8")
         self.send_response(result["statusCode"])
