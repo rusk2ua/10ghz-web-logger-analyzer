@@ -15,7 +15,7 @@ reports are identical to the command-line version. Currently vendored: **v1.6.0*
 `backend/app/analyzer/UPSTREAM.txt`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.2.0**. See the [version history](#version-history).
+**v2.2.1**. See the [version history](#version-history).
 
 ## Architecture
 
@@ -302,6 +302,13 @@ HTTP 400 with a readable `message`.
   log (the sample takes about 1 s), but a huge log with every plot type could get close.
 
 ## Version history
+
+### v2.2.1 (2026-09-25): fix "Access Denied" on /stats/
+
+- CloudFront only serves `index.html` automatically at the site root, so `/stats/` asked S3
+  for a nonexistent `stats/` object and got Access Denied. A small CloudFront Function
+  (`DirectoryIndexFunction`, viewer-request on the website behavior) now serves
+  `index.html` for any URL ending in `/`, and redirects `/stats` to `/stats/`.
 
 ### v2.2.0 (2026-09-25): usage dashboard
 

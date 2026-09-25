@@ -238,6 +238,33 @@ Resources:
         SigningBehavior: always
         SigningProtocol: sigv4
 
+  # CloudFront only applies DefaultRootObject at "/", so /stats/ would ask S3
+  # for a "stats/" object (which, with a private bucket, answers Access Denied).
+  # Serve index.html for folder URLs, and add the missing slash to /stats.
+  DirectoryIndexFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub '${AWS::StackName}-directory-index'
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Serve index.html for folder URLs
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var uri = request.uri;
+          if (uri.endsWith('/')) {
+            request.uri = uri + 'index.html';
+          } else if (uri.split('/').pop().indexOf('.') === -1) {
+            return {
+              statusCode: 301,
+              statusDescription: 'Moved Permanently',
+              headers: { location: { value: uri + '/' } }
+            };
+          }
+          return request;
+        }
+
   SecurityHeadersPolicy:
     Type: AWS::CloudFront::ResponseHeadersPolicy
     Properties:
@@ -296,6 +323,9 @@ Resources:
           Compress: true
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized
           ResponseHeadersPolicyId: !Ref SecurityHeadersPolicy
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt DirectoryIndexFunction.FunctionMetadata.FunctionARN
         CacheBehaviors:
           - PathPattern: /api/*
             TargetOriginId: api
