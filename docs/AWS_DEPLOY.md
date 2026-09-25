@@ -352,6 +352,7 @@ using.
 | Symptom | Cause and fix |
 |---|---|
 | `Docker is installed but not running` | Start Docker Desktop and wait for it to show "running". |
+| `verify-deployment.sh` fails with `CERTIFICATE_VERIFY_FAILED` or `TLS certificate check failed` | python.org Python on macOS has no root certificates until you run `open "/Applications/Python 3.12/Install Certificates.command"`. Since v2.3.2 the script uses `certifi` when it's installed, so running it with the venv active also works. |
 | `sam build` says `Running AWS SAM projects locally requires a container runtime` while Docker is running | SAM can't find Docker's socket. `git pull` for the latest `deploy.sh`, which detects it, or run `export DOCKER_HOST="unix://$HOME/.docker/run/docker.sock"` first. Permanent fix: Docker Desktop → Settings → Advanced → tick **Allow the default Docker socket to be used**. |
 | `sam build` is very slow or errors on Apple Silicon | Turn on Rosetta emulation in Docker Desktop (Step 1) and restart Docker. |
 | `Unable to locate credentials` or `ExpiredToken` | Run `aws configure`, or `aws sso login` if you use SSO. Check `AWS_PROFILE` is set if you use a named profile. |
