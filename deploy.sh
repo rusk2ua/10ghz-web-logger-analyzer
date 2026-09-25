@@ -115,7 +115,8 @@ URL=$(output WebsiteURL)
 
 # ------------------------------------------------------------------ frontend
 say "Uploading the website to s3://$BUCKET"
-aws s3 sync frontend/ "s3://$BUCKET/" --delete --exclude "*.html" \
+# stats/data.json is written by the daily stats job, not deployed -- never delete it.
+aws s3 sync frontend/ "s3://$BUCKET/" --delete --exclude "*.html" --exclude "stats/data.json" \
   --cache-control "public, max-age=300"
 aws s3 sync frontend/ "s3://$BUCKET/" --delete --exclude "*" --include "*.html" \
   --cache-control "no-cache" --content-type "text/html; charset=utf-8"
@@ -156,6 +157,15 @@ else
   echo "NOTE: couldn't activate the 'app' cost allocation tag yet -- AWS may not have"
   echo "      discovered it. Rerun ./deploy.sh tomorrow, or activate it under"
   echo "      Billing > Cost allocation tags. Until then the app budget reads \$0."
+fi
+
+say "Refreshing the stats dashboard"
+if aws lambda invoke --region "$REGION" --function-name "$(output ProcessFunctionName)" \
+     --cli-binary-format raw-in-base64-out --payload '{"action": "aggregate"}' \
+     "${TMPDIR:-/tmp}/arrl-stats.json" >/dev/null 2>&1; then
+  echo "    $URL/stats/ updated ($(cat "${TMPDIR:-/tmp}/arrl-stats.json"))"
+else
+  echo "WARNING: couldn't refresh the stats now; the daily job will at 06:15 UTC."
 fi
 
 say "Done!  $URL"

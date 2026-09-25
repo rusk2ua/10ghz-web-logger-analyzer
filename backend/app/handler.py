@@ -1,4 +1,10 @@
-"""Lambda entry point: POST /api/process
+"""Lambda entry point.
+
+  POST /api/process   analyze contest logs (below)
+  POST /api/ping      count a home-page visit for the stats dashboard
+  {"action": "aggregate"} (daily schedule)  rebuild the stats dashboard data
+
+POST /api/process
 
 Request body (JSON):
     {
@@ -20,6 +26,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import uuid
 import zipfile
 
@@ -27,6 +34,7 @@ import requests
 
 import runner
 import storage
+import usage
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -167,7 +175,7 @@ def parse_request(event):
     }
 
 
-def process(req, store, workdir):
+def process(req, store, workdir, record):
     inputs_dir = os.path.join(workdir, "inputs")
     out_dir = os.path.join(workdir, "outputs")
     os.makedirs(inputs_dir)
@@ -180,6 +188,14 @@ def process(req, store, workdir):
     for i, (label, text) in enumerate(raw):
         path = _save_log(text, label, inputs_dir, i)
         sources.append(runner.inspect_source(path, label, req["callsign"]))
+    record["logs"] = [{
+        "format": "cabrillo" if s.path.endswith(".log") else "csv",
+        "qsos": s.qsos,
+        "bands": s.bands,
+        "year": int(s.first_date[:4]) if s.first_date[:4].isdigit() else None,
+        "grids": s.grids,
+        "op": usage.operator_id(s.callsign),
+    } for s in sources]
 
     for s in sources:
         if s.callsign != "UNKNOWN" and not CALLSIGN_RE.match(s.callsign):
@@ -240,6 +256,11 @@ def process(req, store, workdir):
 
     for f in files:
         del f["path"]
+    record["files"] = len(files)
+    record["failedOutputs"] = sorted({e["output"] for e in errors})
+    record["status"] = "ok" if files and not errors else ("partial" if files else "input_error")
+    if not files:
+        record["error"] = "no_output"
 
     return {
         "success": bool(files),
@@ -257,24 +278,41 @@ def process(req, store, workdir):
 
 
 def handler(event, context=None):
+    if event.get("action") == "aggregate":  # daily schedule
+        return usage.aggregate()
+    path = event.get("rawPath") or event.get("path") or ""
     method = (event.get("requestContext", {}).get("http", {}).get("method")
               or event.get("httpMethod") or "POST")
     if method == "OPTIONS":
         return {"statusCode": 204, "body": ""}
     if method != "POST":
         return _response(405, {"success": False, "message": "Use POST."})
+    if path.endswith("/api/ping"):
+        return usage.ping(event)
 
+    started = time.monotonic()
+    record = {"upstream": runner.upstream_version().get("version")}
     workdir = tempfile.mkdtemp(prefix="req-", dir=os.environ.get("WORK_DIR") or None)
     try:
         req = parse_request(event)
+        record.update(
+            source="sheets" if req["sheets_url"] else "files",
+            nLogs=len(req["files"]) + (1 if req["sheets_url"] else 0),
+            outputs=req["outputs"],
+            bandCategory=req["band_category"],
+        )
         store = storage.from_environment()
-        return _response(200, process(req, store, workdir))
+        return _response(200, process(req, store, workdir, record))
     except runner.InputError as e:
+        record.update(status="input_error", error=usage.error_code(e))
         return _response(400, {"success": False, "message": str(e)})
     except Exception:
         logger.exception("Unhandled error")
+        record.update(status="server_error", error="server_error")
         return _response(500, {"success": False,
                                "message": "Something went wrong processing this log. "
                                           "Please try again, or report it if it keeps happening."})
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+        record["duration_ms"] = int((time.monotonic() - started) * 1000)
+        usage.record_analysis(record)

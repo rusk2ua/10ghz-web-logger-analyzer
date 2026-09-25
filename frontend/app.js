@@ -246,4 +246,10 @@
   }
 
   updateComparisonOption();
+
+  // Count this visit for the owner's stats dashboard: an anonymous ping, no
+  // cookies, no identifiers. Failures are ignored.
+  try {
+    fetch('api/ping', { method: 'POST', body: '{}', keepalive: true }).catch(() => {});
+  } catch (_) { /* ignore */ }
 })();

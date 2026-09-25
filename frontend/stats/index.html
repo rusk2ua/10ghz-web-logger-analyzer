@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Analyzer Usage Stats</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="stats.css">
+</head>
+<body>
+  <main class="viz-root">
+    <header class="page-head">
+      <div>
+        <h1>10 GHz Log Analyzer &middot; Usage</h1>
+        <p class="meta" id="meta">Loading&hellip;</p>
+      </div>
+      <a class="back" href="../">&larr; Back to the analyzer</a>
+    </header>
+
+    <p id="empty" class="empty" hidden>
+      No usage recorded yet. Statistics start with the first analysis after this dashboard was
+      deployed, and the page is rebuilt daily at 06:15 UTC (and after every deploy).
+    </p>
+
+    <div id="content" hidden>
+      <section class="tiles" id="tiles" aria-label="Headline numbers"></section>
+
+      <section class="panel">
+        <h2>Activity over time</h2>
+        <p class="note">Daily totals, last <span id="dailySpan"></span> days. Hover a bar for the date.</p>
+        <figure class="chart">
+          <figcaption>Home page visits per day</figcaption>
+          <div class="daily" id="visitsChart"></div>
+        </figure>
+        <figure class="chart">
+          <figcaption>Analyses run per day</figcaption>
+          <div class="daily" id="analysesChart"></div>
+        </figure>
+        <details class="table-view">
+          <summary>By month (table)</summary>
+          <table id="monthly">
+            <thead><tr><th>Month</th><th>Visits</th><th>Analyses</th><th>Logs</th><th>QSOs</th><th>Operators</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </details>
+      </section>
+
+      <section class="panel">
+        <h2>What people generate</h2>
+        <p class="note">Share of successful analyses that included each output.</p>
+        <div class="bars" id="outputs"></div>
+      </section>
+
+      <section class="grid-2">
+        <div class="panel">
+          <h2>How logs arrive</h2>
+          <h3>Source</h3><div class="bars" id="source"></div>
+          <h3>Format</h3><div class="bars" id="formats"></div>
+          <h3>Logs per analysis</h3><div class="bars" id="logsPerRequest"></div>
+          <h3>Band category chosen</h3><div class="bars" id="bandCategory"></div>
+        </div>
+        <div class="panel">
+          <h2>The logs</h2>
+          <h3>Bands worked <span class="hint">(share of logs)</span></h3><div class="bars" id="bands"></div>
+          <h3>Log size <span class="hint">(QSOs per log)</span></h3><div class="bars" id="qsoBuckets"></div>
+          <h3>Contest year</h3><div class="bars" id="years"></div>
+        </div>
+      </section>
+
+      <section class="grid-2">
+        <div class="panel">
+          <h2>Operating grids</h2>
+          <p class="note"><span id="gridsDistinct"></span> distinct 4-character grids. Top 25 by logs:</p>
+          <table id="grids" class="compact">
+            <thead><tr><th>Grid</th><th>Logs</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <h2>Operators</h2>
+          <p class="note">Unique operators are counted by anonymous id. No call signs are stored.</p>
+          <h3>Analyses per operator</h3><div class="bars" id="repeatOperators"></div>
+          <h2 class="spaced">Problems</h2>
+          <h3>Rejected or failed requests</h3><div class="bars" id="errors"></div>
+          <h3>Outputs that failed <span class="hint">(within otherwise-successful analyses)</span></h3>
+          <div class="bars" id="failedOutputs"></div>
+        </div>
+      </section>
+    </div>
+    <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+  </main>
+  <script src="stats.js"></script>
+</body>
+</html>

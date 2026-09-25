@@ -15,7 +15,7 @@ reports are identical to the command-line version. Currently vendored: **v1.6.0*
 `backend/app/analyzer/UPSTREAM.txt`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.1.0**. See the [version history](#version-history).
+**v2.2.0**. See the [version history](#version-history).
 
 ## Architecture
 
@@ -186,6 +186,8 @@ parameters. Change them in `template.yaml` or with `sam deploy --parameter-overr
     actual spend or when forecast spend goes over $10.
 - Both S3 buckets are private. Results are reachable only through 1-hour presigned links and
   are deleted after a day. Uploaded logs never leave the Lambda's temp directory.
+- Usage statistics are anonymous: no call signs, IP addresses or log contents are stored
+  (see [Usage dashboard](#usage-dashboard)).
 - CloudFront adds a strict Content-Security-Policy, HSTS, and anti-framing headers.
 
 ### Cost
@@ -204,6 +206,55 @@ remove the old one:
 ```bash
 aws cloudformation delete-stack --region us-east-2 --stack-name Arrl10GhzWebStack
 ```
+
+## Usage dashboard
+
+**[10ghz.microwavedx.com/stats/](https://10ghz.microwavedx.com/stats/)** is an owner's dashboard
+of how the site is used. It isn't linked from the site, and it's excluded from search engines
+(`robots.txt` and a `noindex` tag). It isn't password-protected, but it shows only anonymous
+aggregates.
+
+It shows:
+
+- **Headline numbers:** analyses (all time and the last 30 days), unique operators, home-page
+  visits, visit-to-analysis rate, success rate, median log size, and processing time.
+- **Activity over time:** visits and analyses per day for the last 180 days, plus a monthly
+  table.
+- **Feature use:** how often each output is requested, file upload vs. Google Sheets, Cabrillo
+  vs. CSV, logs per analysis, and the band category chosen.
+- **The logs themselves:** bands worked, QSO-count distribution, contest year, and the top
+  4-character operating grids.
+- **Operators:** repeat use (1, 2–3, or 4+ analyses per operator).
+- **Problems:** rejected requests by reason, server errors, and outputs that failed.
+
+**How it works**
+
+1. **One record per request.** Each analysis writes a small JSON record to the private results
+   bucket under `usage/` (`backend/app/usage.py`), and each home-page view sends an anonymous
+   `POST /api/ping`.
+2. **What's stored.** Call signs are stored only as a salted one-way hash, used for
+   unique-operator counts. Visitors are counted by a hash of that day's IP and browser, which
+   can't be linked across days. No log contents are ever stored.
+3. **Daily rebuild.** Every day at 06:15 UTC the same Lambda, run on a schedule, compacts
+   finished days into one file per day (`usage/daily/`) and publishes `stats/data.json` to
+   the website bucket. `deploy.sh` also refreshes it after every deploy.
+4. **Cost.** It stays within the free tiers: a few hundred small S3 objects a year and one
+   short Lambda run a day.
+
+To refresh it by hand:
+
+```bash
+aws lambda invoke --region us-east-2 --cli-binary-format raw-in-base64-out \
+  --payload '{"action": "aggregate"}' \
+  --function-name "$(aws cloudformation describe-stacks --region us-east-2 --stack-name arrl-10ghz-web --query "Stacks[0].Outputs[?OutputKey=='ProcessFunctionName'].OutputValue" --output text)" \
+  /tmp/stats.json
+```
+
+Locally, `python dev/local_server.py` serves the dashboard at http://localhost:8000/stats/ and
+rebuilds it on every load.
+
+Statistics start from the first request after v2.2.0 is deployed. Nothing earlier was
+recorded.
 
 ## Keeping up with the CLI project
 
@@ -251,6 +302,26 @@ HTTP 400 with a readable `message`.
   log (the sample takes about 1 s), but a huge log with every plot type could get close.
 
 ## Version history
+
+### v2.2.0 (2026-09-25): usage dashboard
+
+- New owner's dashboard at `/stats/`: activity over time, feature use, log characteristics,
+  operating grids, repeat operators, and errors. It isn't linked from the site, and it's
+  `noindex` and excluded in `robots.txt`.
+- Anonymous usage recording (`backend/app/usage.py`):
+  - one record per analysis;
+  - a `POST /api/ping` per home-page view, with its own throttle of 5/s (burst 10);
+  - salted hashes instead of call signs and IP addresses;
+  - no log contents.
+- The same Lambda runs on a daily 06:15 UTC schedule to compact records and publish
+  `stats/data.json`. `deploy.sh` refreshes it after each deploy, and its site sync no longer
+  deletes that file.
+- The results bucket's one-day deletion rule now applies only to `results/`, so usage records
+  are kept.
+- Log metadata now includes 4-character operating grids.
+- `dev/local_server.py` serves and rebuilds the dashboard locally, and honors
+  `LOCAL_OUTPUT_DIR`.
+- 12 new tests (38 total).
 
 ### v2.1.0 (2026-09-24): tighter cost controls
 
