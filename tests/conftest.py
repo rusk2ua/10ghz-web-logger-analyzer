@@ -25,15 +25,32 @@ def output_dir(tmp_path, monkeypatch):
 
 @pytest.fixture
 def call_api(output_dir):
-    """POST a JSON body to the Lambda handler; returns (status, body, output_dir)."""
+    """Submit an analysis like the browser does: POST /api/process, then (for a
+    queued job -- run inline in local mode) GET /api/jobs/{id}. Returns
+    (status, body) where body is the finished job's result, or its error."""
     import handler
 
     def _call(body):
-        event = {"requestContext": {"http": {"method": "POST"}}, "body": json.dumps(body)}
-        result = handler.handler(event)
-        return result["statusCode"], json.loads(result["body"])
+        event = {"rawPath": "/api/process", "requestContext": {"http": {"method": "POST"}},
+                 "body": json.dumps(body)}
+        submitted = handler.handler(event)
+        payload = json.loads(submitted["body"])
+        if submitted["statusCode"] != 202:
+            return submitted["statusCode"], payload
+        job = get_job(payload["jobId"])
+        assert job["state"] in ("done", "error"), job
+        if job["state"] == "done":
+            return job["statusCode"], job["result"]
+        return job["statusCode"], {"success": False, "message": job["message"]}
 
     return _call
+
+
+def get_job(job_id):
+    import handler
+    result = handler.handler({"rawPath": f"/api/jobs/{job_id}",
+                              "requestContext": {"http": {"method": "GET"}}})
+    return json.loads(result["body"])
 
 
 def local_file(output_dir, file_entry):

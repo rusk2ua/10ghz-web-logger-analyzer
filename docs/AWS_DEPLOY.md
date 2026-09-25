@@ -187,9 +187,10 @@ What you'll see, in order:
 
 1. **Account check:** `Deploying stack 'arrl-10ghz-web' to account 123456789012 in us-east-2`.
 2. **`sam build`:** Docker builds the Lambda image. The first build downloads the AWS
-   Python 3.12 base image and installs pandas, numpy and matplotlib. Expect 3–10 minutes;
-   later builds are faster because of caching.
-3. **`sam deploy`:** it creates an ECR repository, pushes the image (about 400 MB, so give
+   Python 3.12 base image, installs pandas, numpy, matplotlib and the mapping libraries,
+   and downloads about 36 MB of Natural Earth coastline data for the maps. Expect 5–15
+   minutes; later builds are faster because of caching.
+3. **`sam deploy`:** it creates an ECR repository, pushes the image (about 600 MB, so give
    it a few minutes on home upload speeds), shows the change set, and creates the stack.
    **The CloudFront distribution takes 5–15 minutes**, so a pause here is normal.
 4. **Upload:** the site files go to S3, and the CloudFront cache is cleared.
@@ -201,11 +202,14 @@ What you'll see, in order:
 ./verify-deployment.sh
 ```
 
-It checks three things and prints OK or FAIL for each:
+It prints OK or FAIL for each check:
 
 - `OK   site loads (HTTP 200)`
-- `OK   API generated N files ...`: the sample log went through the real Lambda.
+- `OK   job queued (...)`: the API accepted the sample log as a background job.
+- `OK   job finished in N s with M files ...`: the Lambda ran the analysis and a grid-mapper
+  path map. The first job after a deploy can take 20–30 s while the Lambda starts up.
 - `OK   download works`: a presigned S3 link works.
+- `OK   running analyzer v… and grid-mapper v…`
 
 If the site check fails right after the deploy, wait 5 minutes and run it again;
 brand-new distributions take a while to reach every edge location.
@@ -358,5 +362,6 @@ using.
 | Site gives 403 or old content right after a deploy | CloudFront is still spreading the update. Wait 5–10 minutes and reload with Cmd+Shift+R. |
 | Page says "The analyzer is busy right now", or a server error, during heavy use | That's the rate limit (1 request/s, burst 2) or the concurrency cap (3) working. If real users hit it, raise `ApiRateLimit`/`ApiBurstLimit` in `template.yaml`, or run `RESERVED_CONCURRENCY=5 ./deploy.sh`. |
 | `deploy.sh` prints `couldn't activate the 'app' cost allocation tag yet` | AWS hasn't discovered the new tag. This is normal right after a first deploy. Rerun `./deploy.sh` the next day, or activate `app` under Billing → Cost allocation tags. |
-| A very large log returns an error after about 30 seconds | API Gateway's 30-second limit. Untick some plot options and try again. |
+| "This analysis didn't finish" | The job hit the 15-minute Lambda timeout, or it crashed. Check the Lambda logs (Day-to-day, above). Unticking the OpenStreetMap underlay, or some maps, makes a big rover log much faster. |
+| Page stays on "Waiting for a free worker…" | All 3 reserved Lambda runs are busy with other jobs. It starts when one frees up. If this happens often, raise `RESERVED_CONCURRENCY`. |
 | A stack ends in `ROLLBACK_COMPLETE` | Open CloudFormation → the stack → Events and find the first red `CREATE_FAILED` row for the cause. A stack in `ROLLBACK_COMPLETE` must be deleted before `./deploy.sh` can try again. |

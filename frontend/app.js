@@ -7,6 +7,8 @@
   const MAX_FILES = 4;
   const MAX_FILE_BYTES = 1000000;
   const API_URL = 'api/process';
+  const JOB_URL = 'api/jobs/';
+  const MAX_WAIT_MS = 20 * 60 * 1000;
 
   const $ = (id) => document.getElementById(id);
   const form = $('processForm');
@@ -127,7 +129,66 @@
   function setBusy(busy) {
     $('submitBtn').disabled = busy;
     $('submitBtn').textContent = busy ? 'Analyzing…' : 'Analyze log';
+    if (busy) setStatus('Sending your log…');
     show($('status'), busy);
+  }
+
+  function setStatus(text) { $('statusText').textContent = text; }
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  // ------------------------------------------------------------ map options
+  const mapBoxes = () => [...form.querySelectorAll('input[name="outputs"][value^="grid_"]')];
+  function updateMapExtras() {
+    const any = mapBoxes().some((b) => b.checked);
+    ['mapHtml', 'mapOsm'].forEach((id) => { $(id).disabled = !any; });
+    $('mapExtras').classList.toggle('disabled', !any);
+  }
+  mapBoxes().forEach((b) => b.addEventListener('change', updateMapExtras));
+
+  // ------------------------------------------------------------ background jobs
+  // /api/process validates and queues the analysis; the result is fetched by
+  // polling /api/jobs/<id> (maps for a big rover log can take minutes).
+  async function runJob(payload) {
+    const resp = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    let data;
+    try { data = await resp.json(); } catch (_) { data = null; }
+    if (resp.status === 429 || resp.status === 503) {
+      throw new Error('The analyzer is busy right now. Please wait a few seconds and try again.');
+    }
+    if (!data) throw new Error(`Server error (HTTP ${resp.status}). Please try again.`);
+    if (resp.status !== 202 || !data.jobId) throw new Error(data.message || 'The analysis could not be started.');
+    return pollJob(data.jobId, payload.outputs.some((o) => o.startsWith('grid_')));
+  }
+
+  async function pollJob(jobId, withMaps) {
+    const started = Date.now();
+    let failures = 0;
+    for (;;) {
+      const elapsed = Date.now() - started;
+      if (elapsed > MAX_WAIT_MS) throw new Error('This is taking much longer than expected. Please try again later.');
+      let job = null;
+      try {
+        const resp = await fetch(JOB_URL + jobId, { cache: 'no-store' });
+        if (resp.status !== 429) job = await resp.json();
+        failures = 0;
+      } catch (_) {
+        if (++failures > 5) throw new Error('Lost contact with the server. Check your connection and try again.');
+      }
+      if (job && job.state === 'done') return job.result;
+      if (job && job.state === 'error') throw new Error(job.message || 'The analysis failed.');
+      const secs = Math.round(elapsed / 1000);
+      if (job && job.state === 'queued') {
+        setStatus(secs < 5 ? 'Starting…' : `Waiting for a free worker… ${secs} s`);
+      } else if (job) {
+        setStatus(`Working… ${secs} s` + (withMaps ? ' · maps can take a minute or two' : ''));
+      }
+      await sleep(elapsed < 10000 ? 1500 : 3000);
+    }
   }
 
   // ------------------------------------------------------------ submit
@@ -141,6 +202,8 @@
       callsign: $('callsign').value.trim(),
       bandCategory: $('bandCategory').value,
       outputs,
+      mapHtml: $('mapHtml').checked,
+      mapOsm: $('mapOsm').checked,
     };
     if (inputType() === 'files') {
       if (!chosenFiles.length) return showError('Choose at least one log file.');
@@ -156,18 +219,8 @@
 
     setBusy(true);
     try {
-      const resp = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      let data;
-      try { data = await resp.json(); } catch (_) { data = null; }
-      if (resp.status === 429 || resp.status === 503) {
-        throw new Error('The analyzer is busy right now. Please wait a few seconds and try again.');
-      }
-      if (!data) throw new Error(`Server error (HTTP ${resp.status}). Please try again.`);
-      if (!resp.ok || !data.files || !data.files.length) {
+      const data = await runJob(payload);
+      if (!data.files || !data.files.length) {
         const details = (data.errors || []).map((e) => `${e.label}: ${e.message}`).join('\n');
         throw new Error([data.message || 'Nothing was generated.', details].filter(Boolean).join('\n'));
       }
@@ -184,6 +237,7 @@
   form.addEventListener('reset', () => {
     chosenFiles = [];
     renderFileList();
+    setTimeout(updateMapExtras);
     hideError();
     show($('results'), false);
     setTimeout(() => {
@@ -195,6 +249,7 @@
   // ------------------------------------------------------------ results
   function renderResults(data) {
     if (data.upstream) $('upstreamVersion').textContent = data.upstream;
+    if (data.gridMapper) $('gridMapperVersion').textContent = data.gridMapper;
 
     $('logSummary').replaceChildren(...data.logs.map((log) => el('div', { class: 'log-card' },
       el('div', { class: 'log-call', text: log.callsign }),
@@ -215,9 +270,16 @@
       if (!groups.has(f.label)) groups.set(f.label, []);
       groups.get(f.label).push(f);
     });
-    $('fileGroups').replaceChildren(...[...groups].map(([label, files]) => el('div', { class: 'file-group' },
-      el('h3', { text: label }),
-      el('div', { class: files[0].kind === 'image' ? 'thumbs' : 'downloads' }, files.map((f) => renderFile(f, data.logs.length > 1))))));
+    // A group can mix images (thumbnails) and downloads, e.g. maps + their HTML versions.
+    const multi = data.logs.length > 1;
+    $('fileGroups').replaceChildren(...[...groups].map(([label, files]) => {
+      const images = files.filter((f) => f.kind === 'image');
+      const others = files.filter((f) => f.kind !== 'image');
+      return el('div', { class: 'file-group' },
+        el('h3', { text: label }),
+        images.length ? el('div', { class: 'thumbs' }, images.map((f) => renderFile(f, multi))) : null,
+        others.length ? el('div', { class: 'downloads' }, others.map((f) => renderFile(f, multi))) : null);
+    }));
 
     const zip = $('zipLink');
     show(zip, Boolean(data.archive));
@@ -241,11 +303,13 @@
         el('img', { src: file.url, alt: file.name, loading: 'lazy' }),
         el('span', { text: caption }));
     }
+    const size = formatSize(file.size) + (file.kind === 'html' ? ' · interactive map' : '');
     return el('a', { class: 'download', href: file.url, download: file.name },
-      el('span', { text: caption }), el('small', { text: formatSize(file.size) }));
+      el('span', { text: caption }), el('small', { text: size }));
   }
 
   updateComparisonOption();
+  updateMapExtras();
 
   // Count this visit for the owner's stats dashboard: an anonymous ping, no
   // cookies, no identifiers. Failures are ignored.

@@ -142,6 +142,12 @@ pre { background: var(--code-bg); padding: 0.8rem 1rem; border-radius: 6px; over
 .option input { margin-top: 0.3rem; }
 .option small { display: block; color: var(--muted); }
 .option.disabled { opacity: 0.55; cursor: not-allowed; }
+.subhead { font-size: 1rem; margin: 1.2rem 0 0.6rem; }
+.map-extras { display: grid; gap: 0.4rem; margin-top: 0.7rem; font-size: 0.92rem; }
+.map-extras label { display: flex; gap: 0.5rem; align-items: flex-start; cursor: pointer; }
+.map-extras input { margin-top: 0.3rem; }
+.map-extras.disabled { opacity: 0.55; }
+.file-group .thumbs + .downloads { margin-top: 0.6rem; }
 
 /* ---------------------------------------------------------------- buttons */
 .actions { display: flex; gap: 0.8rem; flex-wrap: wrap; }
