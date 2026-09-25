@@ -51,14 +51,16 @@ LOGS_DIR = "logs"
 # get mismatched between scripts in the first place.
 BAND_BUCKETS = [
     # (display name, Cabrillo code, points-per-km multiplier, raw aliases)
+    # Multipliers per ARRL 10 GHz and Up rules 5.2: 10 GHz x1, 24 GHz x2,
+    # 47 GHz x3, 75 GHz x4, and 122 GHz and up x5.
     ("10 GHz",  "10G",  1,  ("10",)),
     ("24 GHz",  "24G",  2,  ("24",)),
     ("47 GHz",  "47G",  3,  ("47",)),
     ("78 GHz",  "75G",  4,  ("78", "75", "76")),
     ("122 GHz", "123G", 5,  ("122", "119", "120", "123")),
-    ("142 GHz", "142G", 6,  ("142",)),
-    ("241 GHz", "241G", 10, ("241",)),
-    ("300 GHz", "300G", 10, ("300",)),
+    ("142 GHz", "142G", 5,  ("142",)),
+    ("241 GHz", "241G", 5,  ("241",)),
+    ("300 GHz", "300G", 5,  ("300",)),
 ]
 
 BAND_ORDER = [display for display, _, _, _ in BAND_BUCKETS]
