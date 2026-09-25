@@ -20,7 +20,7 @@ reports and maps are identical to the command-line versions. Currently vendored:
 `backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.3.1**. See the [version history](#version-history).
+**v2.3.2**. See the [version history](#version-history).
 
 ## Architecture
 
@@ -333,6 +333,15 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
   result.
 
 ## Version history
+
+### v2.3.2 (2026-09-25): sturdier deployment check
+
+- `verify-deployment.sh` now uses the `certifi` CA bundle when it's installed. python.org
+  Python on macOS doesn't use the system certificates until *Install Certificates.command*
+  is run, which made the API checks fail with `CERTIFICATE_VERIFY_FAILED`. If certificate
+  checking still fails, it prints the fix instead of a traceback.
+- It also resolves relative download links, so it can smoke-test the local dev server:
+  `./verify-deployment.sh http://127.0.0.1:8000`.
 
 ### v2.3.1 (2026-09-25): upper-band scoring fix
 

@@ -24,7 +24,25 @@ status=$(curl -s -o /dev/null -w '%{http_code}' "$URL/")
 # Submit the sample log as a background job (with a path map, so grid-mapper
 # is exercised too), poll until it finishes, then download one result.
 python3 - "$URL" <<'EOF'
-import json, sys, time, urllib.error, urllib.request
+import json, ssl, sys, time, urllib.error, urllib.parse, urllib.request
+
+# The python.org macOS installer doesn't use the system certificate store
+# until "Install Certificates.command" is run, so prefer certifi's CA bundle
+# (installed with requests in the venv) and fall back to the default store.
+try:
+    import certifi
+    TLS = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    TLS = ssl.create_default_context()
+
+def urlopen(req, timeout=30):
+    try:
+        return urllib.request.urlopen(req, timeout=timeout, context=TLS)
+    except urllib.error.URLError as e:
+        if isinstance(e.reason, ssl.SSLCertVerificationError):
+            sys.exit(f"FAIL TLS certificate check failed ({e.reason.verify_message}). With python.org "
+                     "Python on macOS, run its 'Install Certificates.command', or activate the venv.")
+        raise
 
 url = sys.argv[1]
 csv = open("tests/fixtures/sample_qso_log.csv").read()
@@ -34,7 +52,7 @@ body = json.dumps({"files": [{"name": "sample_qso_log.csv", "content": csv}], "c
 def call(path, data=None):
     req = urllib.request.Request(url + path, data=data, headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urlopen(req) as resp:
             return resp.status, json.loads(resp.read())
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode(errors="replace")
@@ -64,7 +82,7 @@ if r["errors"]:
     print("WARN", r["errors"])
 if not any(f["output"] == "grid_paths" for f in r["files"]):
     sys.exit("FAIL no grid-mapper path maps were generated")
-with urllib.request.urlopen(r["files"][0]["url"]) as resp:
+with urlopen(urllib.parse.urljoin(url + "/", r["files"][0]["url"])) as resp:
     assert resp.status == 200
     print(f"OK   download works ({resp.headers.get('Content-Type')}, {len(resp.read())} bytes)")
 print(f"OK   running analyzer {r['upstream']} and grid-mapper {r.get('gridMapper')}")
