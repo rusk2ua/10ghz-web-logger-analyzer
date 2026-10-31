@@ -8,7 +8,8 @@
 #   ALT_DOMAIN_NAME=www.microwavedx.com second host name on the same certificate
 #   HOSTED_ZONE_ID=Z0123...             skip the automatic hosted-zone lookup
 #   CERT_ARN=arn:aws:acm:us-east-1:...  use an existing us-east-1 certificate
-#   ALERT_EMAIL=you@example.com         app and account budget alerts
+#   ALERT_EMAIL=you@example.com         app and account budget alerts (an existing stack's
+#                                       address is reused if you leave this out)
 #   APP_BUDGET_USD=5                    monthly budget for this app alone
 #   MONTHLY_BUDGET_USD=10               whole-account safety-net budget
 #   RESERVED_CONCURRENCY=3              Lambda concurrency cap (auto-detected if unset)
@@ -43,6 +44,40 @@ fi
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) \
   || fail "AWS credentials not configured. Run 'aws configure' (or 'aws sso login')."
 say "Deploying stack '$STACK_NAME' to account $ACCOUNT in $REGION"
+
+# ------------------------------------------------------------------ alert email
+# The alert address is part of the two budgets. Changing it makes CloudFormation
+# replace them, which fails ("a budget with the same name but a different
+# internalId already exists") because they have fixed names, and the whole
+# update rolls back. So reuse the address the stack already has, and stop here,
+# before building anything, if a different one is given.
+# Only "the stack doesn't exist yet" means there is no current email. Any other
+# failure (permissions, throttling, ...) stops here, since carrying on would skip
+# the check. (The AWS CLI exits 254 for every service error, so match the message.)
+describe_err=$(mktemp)
+if current_email=$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK_NAME" \
+    --query "Stacks[0].Parameters[?ParameterKey=='AlertEmail'].ParameterValue | [0]" --output text 2>"$describe_err"); then
+  :
+elif grep -q "does not exist" "$describe_err"; then
+  current_email=""
+else
+  cat "$describe_err" >&2
+  rm -f "$describe_err"
+  fail "Could not read the stack's current parameters, so the alert email can't be checked. Fix the error above and retry."
+fi
+rm -f "$describe_err"
+[[ "$current_email" == "None" ]] && current_email=""
+if [[ -n "$current_email" ]]; then
+  if [[ -z "${ALERT_EMAIL:-}" ]]; then
+    ALERT_EMAIL="$current_email"
+    echo "    reusing the stack's alert email: $ALERT_EMAIL"
+  elif [[ "$(printf %s "$ALERT_EMAIL" | tr 'A-Z' 'a-z')" != "$(printf %s "$current_email" | tr 'A-Z' 'a-z')" ]]; then
+    fail "ALERT_EMAIL=$ALERT_EMAIL differs from the stack's current alert email ($current_email).
+       Changing it replaces the budgets, which CloudFormation can't do because they have fixed names,
+       so the update would fail and roll back. (Gmail ignores dots, but CloudFormation compares the text.)
+       Re-run with ALERT_EMAIL=$current_email, or leave ALERT_EMAIL out to reuse it."
+  fi
+fi
 
 # ------------------------------------------------------------------ custom domain
 if [[ -n "${DOMAIN_NAME:-}" ]]; then

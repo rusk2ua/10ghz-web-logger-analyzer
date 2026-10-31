@@ -20,7 +20,7 @@ reports and maps are identical to the command-line versions. Currently vendored:
 `backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.3.4**. See the [version history](#version-history).
+**v2.3.5**. See the [version history](#version-history).
 
 ## Architecture
 
@@ -176,7 +176,7 @@ All are optional environment variables for `deploy.sh`:
 | `DOMAIN_NAME` / `ALT_DOMAIN_NAME` | none | Custom host name(s) |
 | `HOSTED_ZONE_ID` | auto-lookup | Route 53 zone, if the lookup can't find it |
 | `CERT_ARN` | created | Use an existing us-east-1 certificate |
-| `ALERT_EMAIL` | none | Email for the AWS Budgets alerts (both budgets need it) |
+| `ALERT_EMAIL` | none (an existing stack's is reused) | Email for the AWS Budgets alerts (both budgets need it). A different address than the stack's is refused, since changing it would replace the budgets |
 | `APP_BUDGET_USD` | 5 | Monthly budget for this app alone (tagged resources) |
 | `MONTHLY_BUDGET_USD` | 10 | Whole-account safety-net budget |
 | `RESERVED_CONCURRENCY` | 3, or 0 on small accounts | Max simultaneous Lambda runs |
@@ -335,6 +335,17 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
   result.
 
 ## Version history
+
+### v2.3.5 (2026-10-31): deploy.sh keeps the budget alert email
+
+- **`deploy.sh` reuses the stack's existing `ALERT_EMAIL`** when you leave it out, and stops
+  before building if you pass a different one. The address is part of the two budgets;
+  changing it made CloudFormation replace them, which fails because they have fixed names
+  ("a budget with the same name but a different internalId already exists"), so the whole
+  update rolled back. This happened when the address was typed with different dots
+  (`rus.healy@` vs `rushealy@`: the same Gmail inbox, but different text).
+- New `tests/test_deploy_script.py` runs that part of the script against a fake `aws`.
+- The API throttle stays at the template defaults (1 request/s, burst 2).
 
 ### v2.3.4 (2026-10-31): street underlay on every band
 
