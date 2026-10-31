@@ -154,9 +154,9 @@ def test_street_underlay_applies_to_every_microwave_band(call_api, output_dir):
     html = {f["name"]: local_file(output_dir, f).read_text()
             for f in body["files"] if f["name"].endswith(".html")}
     by_band = {band: text for name, text in html.items()
-               for band in ("144", "2m", "5.7G", "134G") if f"K2UA_{band}_" in name}
+               for band in ("2m", "5.7G", "134G") if f"K2UA_{band}_" in name}
     assert set(by_band) >= {"5.7G", "134G"}, list(html)
     for band in ("5.7G", "134G"):
         assert '"osm": {"opacity"' in by_band[band], band
-    underlay_free = [b for b in ("144", "2m") if b in by_band]
-    assert underlay_free and all('"osm": null' in by_band[b] for b in underlay_free)
+    assert "2m" in by_band, list(html)  # the 144 MHz QSOs are labelled 2m in the file name
+    assert '"osm": null' in by_band["2m"]
