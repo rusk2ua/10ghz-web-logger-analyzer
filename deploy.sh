@@ -51,8 +51,21 @@ say "Deploying stack '$STACK_NAME' to account $ACCOUNT in $REGION"
 # internalId already exists") because they have fixed names, and the whole
 # update rolls back. So reuse the address the stack already has, and stop here,
 # before building anything, if a different one is given.
-current_email=$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK_NAME" \
-  --query "Stacks[0].Parameters[?ParameterKey=='AlertEmail'].ParameterValue | [0]" --output text 2>/dev/null || true)
+# Only "the stack doesn't exist yet" means there is no current email. Any other
+# failure (permissions, throttling, ...) stops here, since carrying on would skip
+# the check. (The AWS CLI exits 254 for every service error, so match the message.)
+describe_err=$(mktemp)
+if current_email=$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK_NAME" \
+    --query "Stacks[0].Parameters[?ParameterKey=='AlertEmail'].ParameterValue | [0]" --output text 2>"$describe_err"); then
+  :
+elif grep -q "does not exist" "$describe_err"; then
+  current_email=""
+else
+  cat "$describe_err" >&2
+  rm -f "$describe_err"
+  fail "Could not read the stack's current parameters, so the alert email can't be checked. Fix the error above and retry."
+fi
+rm -f "$describe_err"
 [[ "$current_email" == "None" ]] && current_email=""
 if [[ -n "$current_email" ]]; then
   if [[ -z "${ALERT_EMAIL:-}" ]]; then
