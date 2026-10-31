@@ -16,11 +16,11 @@ and [grid-mapper](https://github.com/rusk2ua/grid-mapper). Anyone can upload a c
 
 The web app runs both CLI projects' own scripts, vendored unmodified, so its scores,
 reports and maps are identical to the command-line versions. Currently vendored:
-10ghz-log-analyzer **v1.6.1** and grid-mapper **v1.5.0** (see `UPSTREAM.txt` in
+10ghz-log-analyzer **v1.6.2** and grid-mapper **v1.5.1** (see `UPSTREAM.txt` in
 `backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.3.3**. See the [version history](#version-history).
+**v2.3.4**. See the [version history](#version-history).
 
 ## Architecture
 
@@ -335,6 +335,19 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
   result.
 
 ## Version history
+
+### v2.3.4 (2026-10-31): street underlay on every band
+
+- **The OpenStreetMap street underlay now works on every band at 902 MHz and up.** It was
+  silently skipped for many Cabrillo band labels (`1.2G`, `2.3G`, `3.4G`, `5.7G`, `134G`,
+  `241G`, `300G`), so those maps came out without it even when *OpenStreetMap street
+  underlay* was ticked. The 1°×2° grid-square outlines were missing on the same bands. Fixed
+  upstream in grid-mapper v1.5.1 and synced here. 10 GHz maps were never affected.
+- grid-mapper v1.5.1 also starts the 2 mm band at 134 GHz and recognizes the 134, 241 and
+  300 GHz Cabrillo codes.
+- New test in `tests/test_jobs_maps.py` builds maps for 2 m, 5.7 GHz and 134 GHz with the
+  underlay on and checks that only the microwave maps get it.
+- README intro corrected to the vendored versions (analyzer v1.6.2, grid-mapper v1.5.1).
 
 ### v2.3.3 (2026-10-30): 134 GHz band name
 
