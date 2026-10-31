@@ -178,6 +178,11 @@ Use your real address for `ALERT_EMAIL`. It sets up two AWS Budgets email alerts
 - **Account budget:** a safety net covering the whole account. It emails at 80% of $10
   actual spend, or when forecast spend goes over $10. Change it with `MONTHLY_BUDGET_USD=20`.
 
+On later deploys you can leave `ALERT_EMAIL` out: `deploy.sh` reuses the address the stack
+already has. If you pass a different one it stops before building anything, because changing
+the address makes CloudFormation replace the budgets, and it can't (they have fixed names).
+That includes the same Gmail address written with different dots: CloudFormation compares the text.
+
 The app budget only counts resources tagged `app=arrl-10ghz-web`, so `deploy.sh` also
 activates `app` as a cost allocation tag. On a first deploy AWS may not have discovered the
 tag yet. If so, `deploy.sh` prints a NOTE; rerun it the next day, or activate the tag under
@@ -352,6 +357,7 @@ using.
 | Symptom | Cause and fix |
 |---|---|
 | `Docker is installed but not running` | Start Docker Desktop and wait for it to show "running". |
+| `ALERT_EMAIL=... differs from the stack's current alert email` | `deploy.sh` stopped on purpose. Re-run with the address it prints, or leave `ALERT_EMAIL` out to reuse it. (Before v2.3.5 this showed up as `UPDATE_ROLLBACK_COMPLETE` with "A budget or resource with the same name but a different internalId already exists"; the failed update rolls back cleanly and the site is unaffected.) |
 | `verify-deployment.sh` fails with `CERTIFICATE_VERIFY_FAILED` or `TLS certificate check failed` | python.org Python on macOS has no root certificates until you run `open "/Applications/Python 3.12/Install Certificates.command"`. Since v2.3.2 the script uses `certifi` when it's installed, so running it with the venv active also works. |
 | `sam build` says `Running AWS SAM projects locally requires a container runtime` while Docker is running | SAM can't find Docker's socket. `git pull` for the latest `deploy.sh`, which detects it, or run `export DOCKER_HOST="unix://$HOME/.docker/run/docker.sock"` first. Permanent fix: Docker Desktop → Settings → Advanced → tick **Allow the default Docker socket to be used**. |
 | `sam build` is very slow or errors on Apple Silicon | Turn on Rosetta emulation in Docker Desktop (Step 1) and restart Docker. |
