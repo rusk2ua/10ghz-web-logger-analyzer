@@ -24,33 +24,73 @@ BAND_MIN_FREQ_MHZ = {
     '70cm': 420.0, '33cm': 902.0, '23cm': 1240.0,
     '13cm': 2300.0, '9cm': 3300.0, '6cm': 5650.0, '3cm': 10000.0,
     '1.25cm': 24000.0, '6mm': 47000.0, '4mm': 75500.0, '2.5mm': 119980.0,
-    '2mm': 142000.0, '1mm': 241000.0,
+    '2mm': 134000.0, '1mm': 241000.0,
     '10G': 10000.0, '24G': 24000.0, '47G': 47000.0, '75G': 75000.0, '123G': 123000.0,
+    '134G': 134000.0, '142G': 142000.0, '241G': 241000.0, '300G': 300000.0,
 }
 
 OSM_MIN_FREQ_MHZ = 902.0  # 902 MHz and up, per the --osm-basemap band cutoff
 
-def band_is_osm_eligible(band):
-    """Best-effort check for whether a band label represents 902 MHz or
-    higher. Known band names (see BAND_MIN_FREQ_MHZ) are looked up directly;
-    unrecognized labels fall back to parsing a trailing numeric value with an
-    optional GHz/MHz/kHz suffix (e.g. "915MHz", "3.4GHz"). Returns False
-    (conservatively, no basemap) if the band can't be identified either way.
+def band_min_freq_mhz(band):
+    """Best-effort lower-edge frequency of a band label, in MHz, or None if the
+    label can't be identified. Known band names (see BAND_MIN_FREQ_MHZ) are
+    looked up directly. Anything else is parsed generically so new or unusual
+    labels work without a table entry:
+
+    - a number with a frequency unit: "915MHz", "3.4GHz", "5.7G", "134G"
+      (a bare "G" is how Cabrillo writes GHz bands: 1.2G, 10G, 24G, 134G, ...)
+    - a bare number, taken as MHz, the Cabrillo convention: "144", "432"
+    - a wavelength: "23cm", "4mm", "40m"
     """
     if band in BAND_MIN_FREQ_MHZ:
-        return BAND_MIN_FREQ_MHZ[band] >= OSM_MIN_FREQ_MHZ
+        return BAND_MIN_FREQ_MHZ[band]
 
-    match = re.match(r'^([\d.]+)\s*(GHz|MHz|kHz)?$', band.strip(), re.IGNORECASE)
-    if not match:
-        return False
+    label = band.strip()
+    match = re.match(r'^([\d.]+)\s*(GHz|MHz|kHz|G)?$', label, re.IGNORECASE)
+    if match:
+        try:
+            value = float(match.group(1))
+        except ValueError:
+            return None
+        unit = (match.group(2) or 'MHz').lower()
+        if unit in ('ghz', 'g'):
+            return value * 1000
+        if unit == 'khz':
+            return value / 1000
+        return value
 
-    value = float(match.group(1))
-    unit = (match.group(2) or 'MHz').lower()
-    if unit == 'ghz':
-        value *= 1000
-    elif unit == 'khz':
-        value /= 1000
-    return value >= OSM_MIN_FREQ_MHZ
+    match = re.match(r'^([\d.]+)\s*(cm|mm|m)$', label, re.IGNORECASE)
+    if match:
+        try:
+            value = float(match.group(1))
+        except ValueError:
+            return None
+        if value <= 0:
+            return None
+        metres = value * {'m': 1.0, 'cm': 0.01, 'mm': 0.001}[match.group(2).lower()]
+        return 299.792458 / metres  # c / wavelength, in MHz
+    return None
+
+
+def band_is_osm_eligible(band):
+    """Whether a band label represents 902 MHz or higher, i.e. whether the
+    --osm-basemap street underlay applies. Works for any band label that
+    band_min_freq_mhz() can identify, including Cabrillo GHz codes such as
+    "134G". Returns False (conservatively, no basemap) if the band can't be
+    identified.
+    """
+    freq = band_min_freq_mhz(band)
+    return freq is not None and freq >= OSM_MIN_FREQ_MHZ
+
+
+def band_has_grid_outlines(band):
+    """Whether maps for this band draw the 1x2 degree grid-square outlines:
+    6 m (50 MHz) and up. Unidentified labels containing "GHz" still count."""
+    freq = band_min_freq_mhz(band)
+    if freq is not None:
+        return freq >= 50.0
+    return 'GHz' in band
+
 
 def estimate_osm_zoom(lon_min, lon_max, lat_min, lat_max):
     """Pick a reasonable OpenStreetMap tile zoom level for the given extent.
@@ -492,10 +532,12 @@ def freq_to_band(freq_str):
             return "4mm"
         elif 119980000 <= freq <= 120020000:
             return "2.5mm"
-        elif 142000000 <= freq <= 149000000:
+        elif 134000000 <= freq <= 149000000:
             return "2mm"
         elif 241000000 <= freq <= 250000000:
             return "1mm"
+        elif 275000000 <= freq <= 1000000000:
+            return "300G"
         
         # Handle frequency in MHz format (common in logs)
         elif freq < 1000:
@@ -1141,9 +1183,7 @@ def create_grid_map(grids, callsign, band, continents=None, output_file=None, lo
     ax.add_feature(cfeature.LAKES, edgecolor='blue', facecolor='none', linewidth=0.5)
     
     # Add grid square outlines for VHF/UHF/microwave bands
-    vhf_uhf_bands = ['6m', '2m', '1.25m', '70cm', '33cm', '23cm', '13cm', '9cm', '6cm', '3cm', 
-                     '1.25cm', '6mm', '4mm', '2.5mm', '2mm', '1mm', '10G', '24G', '47G', '75G', '123G']
-    if band in vhf_uhf_bands or 'GHz' in band:
+    if band_has_grid_outlines(band):
         # Draw 1°×2° grid square outlines in light gray
         for lat in range(int(lat_min) - 1, int(lat_max) + 2):
             for lon in range(int(lon_min) - 2, int(lon_max) + 3, 2):
@@ -1278,10 +1318,8 @@ def create_grid_map_html(grids, qso_records, callsign, band, continents=None, ou
     for rec in (qso_records or []):
         records_by_grid[rec.get('grid')].append(rec)
 
-    vhf_uhf_bands = ['6m', '2m', '1.25m', '70cm', '33cm', '23cm', '13cm', '9cm', '6cm', '3cm',
-                      '1.25cm', '6mm', '4mm', '2.5mm', '2mm', '1mm', '10G', '24G', '47G', '75G', '123G']
     grid_outlines = []
-    if band in vhf_uhf_bands or 'GHz' in band:
+    if band_has_grid_outlines(band):
         for lat in range(int(lat_min) - 1, int(lat_max) + 2):
             for lon in range(int(lon_min) - 2, int(lon_max) + 3, 2):
                 if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:

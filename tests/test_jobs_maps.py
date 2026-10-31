@@ -136,3 +136,27 @@ def test_map_usage_is_recorded(call_api, output_dir):
     [rec] = [json.loads(p.read_text()) for p in (output_dir / "usage" / "raw").rglob("*.json")]
     assert rec["outputs"] == ["grid_paths"] and rec["mapHtml"] is True and rec["mapOsm"] is False
     assert rec["status"] == "ok" and rec["gridMapper"].startswith("v")
+
+
+def test_street_underlay_applies_to_every_microwave_band(call_api, output_dir):
+    # grid-mapper v1.5.1: the --osm-basemap underlay used to be skipped for
+    # Cabrillo labels such as 5.7G and 134G. 2 m is below 902 MHz: no underlay.
+    log = "\n".join(
+        ["START-OF-LOG: 3.0", "CALLSIGN: K2UA", "CONTEST: ARRL-10-GHZ", "CATEGORY-BAND: ALL"]
+        + [f"QSO: {band} PH 2026-08-15 12{i:02d} K2UA FN12ab {call} {grid}"
+           for i, (band, call, grid) in enumerate(
+               (b, c, g) for b in ("144", "5.7G", "134G")
+               for c, g in (("W1AAA", "FN32ab"), ("W1BBB", "FN33ab")))]
+        + ["END-OF-LOG:"])
+    status, body = call_api({"files": [{"name": "mixed_bands.log", "content": log}],
+                             "outputs": ["grid_density"], "mapHtml": True, "mapOsm": True})
+    assert status == 200, body
+    html = {f["name"]: local_file(output_dir, f).read_text()
+            for f in body["files"] if f["name"].endswith(".html")}
+    by_band = {band: text for name, text in html.items()
+               for band in ("144", "2m", "5.7G", "134G") if f"K2UA_{band}_" in name}
+    assert set(by_band) >= {"5.7G", "134G"}, list(html)
+    for band in ("5.7G", "134G"):
+        assert '"osm": {"opacity"' in by_band[band], band
+    underlay_free = [b for b in ("144", "2m") if b in by_band]
+    assert underlay_free and all('"osm": null' in by_band[b] for b in underlay_free)
