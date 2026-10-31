@@ -1,5 +1,5 @@
 repository: https://github.com/rusk2ua/10ghz-log-analyzer.git
 ref: main
-commit: 3df0f1a2c51fcafcdf77ad000f9b657b0a08bb51
-version: v1.6.1
-synced: 2026-09-25T12:21:15Z
+commit: e42ca64f56d4fa5f2a2a78b1093b25e42dcf17dd
+version: v1.6.2
+synced: 2026-10-31T03:11:39Z

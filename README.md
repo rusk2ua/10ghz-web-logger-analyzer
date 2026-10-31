@@ -20,7 +20,7 @@ reports and maps are identical to the command-line versions. Currently vendored:
 `backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.3.2**. See the [version history](#version-history).
+**v2.3.3**. See the [version history](#version-history).
 
 ## Architecture
 
@@ -334,6 +334,14 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
 
 ## Version history
 
+### v2.3.3 (2026-10-30): 134 GHz band name
+
+- **The "142 GHz" band is now 134 GHz** (Cabrillo `134G`), matching the actual amateur
+  allocation and the ARRL contest band list. Logs that still say `142` are mapped to
+  134 GHz, so they keep scoring at ×5. Fixed upstream in 10ghz-log-analyzer v1.6.2 and
+  synced here.
+- `tests/test_scoring.py` now checks the 134 GHz band and the legacy `142` alias.
+
 ### v2.3.2 (2026-09-25): sturdier deployment check
 
 - `verify-deployment.sh` now uses the `certifi` CA bundle when it's installed. python.org
@@ -346,7 +354,7 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
 ### v2.3.1 (2026-09-25): upper-band scoring fix
 
 - **Band multipliers now match the ARRL rules (section 5.2):** 10 GHz ×1, 24 GHz ×2,
-  47 GHz ×3, 75 GHz ×4, and 122 GHz and up ×5. The analyzer had scored 142 GHz at ×6 and
+  47 GHz ×3, 75 GHz ×4, and 122 GHz and up ×5. The analyzer had scored 142 GHz (now 134 GHz, see v2.3.3) at ×6 and
   241/300 GHz at ×10, which inflated the claimed score, summary, weekend analysis and
   directional plots for any log with QSOs on those bands. Fixed upstream in
   10ghz-log-analyzer v1.6.1 and synced here.

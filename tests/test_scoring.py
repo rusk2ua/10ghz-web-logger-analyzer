@@ -15,7 +15,7 @@ from data_source import BAND_BUCKETS, band_multiplier  # noqa: E402
 
 RULES_MULTIPLIERS = {
     "10 GHz": 1, "24 GHz": 2, "47 GHz": 3, "78 GHz": 4,
-    "122 GHz": 5, "142 GHz": 5, "241 GHz": 5, "300 GHz": 5,
+    "122 GHz": 5, "134 GHz": 5, "241 GHz": 5, "300 GHz": 5,
 }
 
 
@@ -25,7 +25,8 @@ def test_band_table_matches_rules():
 
 @pytest.mark.parametrize("band, expected", [
     ("10", 1), ("10G", 1), ("24", 2), ("47G", 3), ("75G", 4), ("78", 4),
-    ("122", 5), ("123G", 5), ("142", 5), ("142G", 5), ("241", 5), ("241G", 5),
+    ("122", 5), ("123G", 5), ("134", 5), ("134G", 5), ("142", 5), ("142G", 5),
+    ("241", 5), ("241G", 5),
     ("300", 5), ("300G", 5),
 ])
 def test_band_multiplier_aliases(band, expected):
@@ -40,3 +41,12 @@ def test_upper_band_score():
     df = pd.DataFrame([dict(row, band="10"), dict(row, band="241")])
     km = max(1, -(-arrl_10ghz_cabrillo.calculate_distance("FN32kp", "FN33kp") // 1))
     assert arrl_10ghz_cabrillo.calculate_score(df) == int(km * 1 + km * 5 + 200)
+
+
+@pytest.mark.parametrize("band", ["134", "134G", "142", "142G", "134 GHz"])
+def test_134_ghz_band_and_legacy_142_alias(band):
+    # v1.6.2: the nonexistent "142 GHz" band became 134 GHz (Cabrillo 134G);
+    # logs that still say 142 map to it.
+    from data_source import band_to_cabrillo, normalize_band
+    assert normalize_band(band) == "134 GHz"
+    assert band_to_cabrillo(band) == "134G"
