@@ -64,10 +64,12 @@ polls `GET /api/jobs/{id}` every couple of seconds until the result is ready.
 
 ## Run it locally
 
-Needs Python 3.11+.
+Needs Python 3.12 -- the same version as the Lambda image. Newer Pythons (3.14 and up)
+can segfault with the pinned numpy/pandas versions. On a Mac: `brew install python@3.12`,
+then create the venv with `python3.12` instead of `python3`.
 
 ```bash
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 
@@ -341,6 +343,9 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
   134 GHz, so they keep scoring at ×5. Fixed upstream in 10ghz-log-analyzer v1.6.2 and
   synced here.
 - `tests/test_scoring.py` now checks the 134 GHz band and the legacy `142` alias.
+- **CI:** a GitHub Actions workflow (`.github/workflows/tests.yml`) runs cfn-lint and
+  `pytest` on Python 3.12 for every push to `main` and every pull request. It doesn't deploy.
+- Local setup now calls for Python 3.12 to match the Lambda image.
 
 ### v2.3.2 (2026-09-25): sturdier deployment check
 

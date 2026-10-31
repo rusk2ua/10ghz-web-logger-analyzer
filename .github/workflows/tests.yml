@@ -1,0 +1,49 @@
+# Run the test suite and lint the CloudFormation templates on every push and PR.
+# Tests only -- nothing here touches AWS. Deploys still go through ./deploy.sh.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Match the Lambda image (public.ecr.aws/lambda/python:3.12).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # The map tests download ~36 MB of Natural Earth data on first use;
+      # keep it between runs.
+      - name: Cache Natural Earth map data
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/cartopy
+          key: cartopy-natural-earth-v1
+
+      - name: Lint CloudFormation templates
+        run: cfn-lint template.yaml certificate.yaml
+
+      - name: Run tests
+        run: pytest
