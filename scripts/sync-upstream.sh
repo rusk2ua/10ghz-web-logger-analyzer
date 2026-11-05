@@ -76,6 +76,9 @@ sync_gridmapper() {
   cp "$SRC/maidenhead_map.py" "$dest/maidenhead_map.py"
   cp "$SRC/requirements.txt" "$dest/upstream-requirements.txt"
   cp "$SRC/LICENSE" "$dest/LICENSE"
+  # Bundled third-party files grid-mapper reads at run time (Leaflet for the movie).
+  rm -rf "$dest/vendor"
+  if [[ -d "$SRC/vendor" ]]; then cp -R "$SRC/vendor" "$dest/vendor"; fi
   local version
   version="v$(grep -oE '^## \[[0-9.]+\]' "$SRC/CHANGELOG.md" | head -1 | grep -oE '[0-9.]+' || echo unknown)"
   write_upstream "$dest" "$url" "$ref" "$version"

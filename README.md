@@ -18,11 +18,11 @@ and [grid-mapper](https://github.com/rusk2ua/grid-mapper). Anyone can upload a c
 
 The web app runs both CLI projects' own scripts, vendored unmodified, so its scores,
 reports and maps are identical to the command-line versions. Currently vendored:
-10ghz-log-analyzer **v1.6.2** and grid-mapper **v1.6.0** (see `UPSTREAM.txt` in
+10ghz-log-analyzer **v1.6.2** and grid-mapper **v1.6.1** (see `UPSTREAM.txt` in
 `backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.4.0**. See the [version history](#version-history).
+**v2.4.1**. See the [version history](#version-history).
 
 ## Architecture
 
@@ -337,6 +337,18 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
   result.
 
 ## Version history
+
+### v2.4.1 (2026-11-05): saved movies play offline
+
+- **A downloaded movie no longer shows "Access blocked".** With the street underlay
+  on, OpenStreetMap's tile servers refuse requests from a page opened as a local file
+  (it sends no `Referer`) and draw "Access blocked" tiles. From grid-mapper v1.6.1:
+  a movie or interactive map opened from a file leaves the street layer out and says
+  so in its corner; opened from the site, it shows the streets as before.
+- **The movie carries its own map engine** (Leaflet, bundled by grid-mapper in
+  `vendor/leaflet/`), so the copy in "Download everything (.zip)" plays on a computer
+  with no internet at all. About 160 KB more per movie.
+- `scripts/sync-upstream.sh` now also copies grid-mapper's `vendor/` folder.
 
 ### v2.4.0 (2026-11-05): contest movie
 

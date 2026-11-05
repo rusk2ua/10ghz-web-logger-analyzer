@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import re
 import csv
 import math
@@ -853,7 +854,11 @@ const DATA = __DATA_JSON__;
   var b = DATA.bounds;
   map.fitBounds([[b[0][0], b[0][1]], [b[1][0], b[1][1]]]);
 
-  if (DATA.osm) {
+  // OpenStreetMap's tile servers refuse requests without a Referer, which a
+  // page opened from a saved file never sends: they'd draw "Access blocked".
+  if (DATA.osm && location.protocol === 'file:') {
+    map.attributionControl.addAttribution('Street underlay shows when this map is opened from a website');
+  } else if (DATA.osm) {
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       opacity: DATA.osm.opacity, maxZoom: 19,
       attribution: '&copy; OpenStreetMap contributors'
@@ -1665,7 +1670,7 @@ _ANIMATION_PAGE_TEMPLATE = r"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__TITLE__</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+__LEAFLET_CSS__
 <style>
   :root {
     color-scheme: dark;
@@ -1853,7 +1858,7 @@ _ANIMATION_PAGE_TEMPLATE = r"""<!doctype html>
 </div>
 <div id="live" class="sr-only" aria-live="polite"></div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+__LEAFLET_JS__
 <script>
 const DATA = __DATA_JSON__;
 (function () {
@@ -1912,10 +1917,15 @@ const DATA = __DATA_JSON__;
   var zoomKey = 'area';
   map.setView([S[0].lat, S[0].lon], D.zooms[zoomKey]);
 
-  if (D.osm) {
+  // OpenStreetMap's tile servers refuse requests without a Referer, which a
+  // page opened from a saved file never sends: they'd draw "Access blocked".
+  var tiles = D.osm && location.protocol !== 'file:';
+  if (tiles) {
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       opacity: D.osm.opacity, maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
+  } else if (D.osm) {
+    map.attributionControl.addAttribution('Street underlay shows when the movie is opened from a website');
   }
   var bg = D.background || {};
   function addGeoms(geoms, style) {
@@ -1923,7 +1933,7 @@ const DATA = __DATA_JSON__;
       L.geoJSON(g, { style: style, renderer: canvas, interactive: false }).addTo(map);
     });
   }
-  var landFill = D.osm ? 0.25 : 1;
+  var landFill = tiles ? 0.25 : 1;
   addGeoms(bg.land, { stroke: false, fillColor: '#1f242b', fillOpacity: landFill });
   addGeoms(bg.lakes, { color: '#3a4a5c', weight: 0.8, fillColor: '#0e1217', fillOpacity: landFill });
   addGeoms(bg.states, { color: '#363e49', weight: 0.8, dashArray: '3 3', fill: false });
@@ -2368,6 +2378,24 @@ def _animation_background(lat_min, lat_max, lon_min, lon_max, tolerance):
     return out
 
 
+_LEAFLET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vendor', 'leaflet')
+
+
+def _leaflet_tags():
+    """Leaflet's CSS and JS for the --animate page: inlined from the bundled
+    copy in vendor/leaflet so a saved movie needs no CDN, or the unpkg tags if
+    that copy isn't there (e.g. a pip install, which packages only this file)."""
+    try:
+        with open(os.path.join(_LEAFLET_DIR, 'leaflet.css'), encoding='utf-8') as f:
+            css = f.read()
+        with open(os.path.join(_LEAFLET_DIR, 'leaflet.js'), encoding='utf-8') as f:
+            js = f.read()
+    except OSError:
+        return ('<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">',
+                '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>')
+    return '<style>\n' + css + '\n</style>', '<script>\n' + js.replace('</script', '<\\/script') + '\n</script>'
+
+
 def create_animation_html(qso_records_by_band, callsign, fallback_home_grid=None, output_file=None,
                           contest=None, target_seconds=None, osm_basemap=False, osm_opacity=0.3):
     """Write the --animate page: the whole log replayed as a movie, following
@@ -2400,7 +2428,9 @@ def create_animation_html(qso_records_by_band, callsign, fallback_home_grid=None
     # Escape <, > and & so nothing in the log (a callsign, say) can end the script block.
     data_json = (json.dumps(data, separators=(',', ':'))
                  .replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026'))
+    leaflet_css, leaflet_js = _leaflet_tags()
     page = _ANIMATION_PAGE_TEMPLATE.replace('__TITLE__', _esc(f"{callsign} contest movie"))
+    page = page.replace('__LEAFLET_CSS__', leaflet_css).replace('__LEAFLET_JS__', leaflet_js)
     page = page.replace('__DATA_JSON__', data_json)
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(page)
