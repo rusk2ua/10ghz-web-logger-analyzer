@@ -187,6 +187,8 @@ def test_contest_movie_from_cabrillo(call_api, output_dir, no_background):
     [movie] = body["files"]
     assert movie["name"] == "K2UA_contest_animation.html"
     assert movie["kind"] == "movie" and movie["output"] == "grid_movie"
+    page = local_file(output_dir, movie).read_text(encoding="utf-8")
+    assert "unpkg.com" not in page and "Leaflet 1.9.4" in page    # bundled: a saved copy plays offline
     data = _movie_data(local_file(output_dir, movie))
     assert data["title"] == "K2UA \u00b7 ARRL 10 GHz and Up 2026"
     assert data["totals"]["qsos"] > 0 and data["totals"]["skipped"] == 0
