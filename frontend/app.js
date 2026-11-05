@@ -303,6 +303,10 @@
         el('img', { src: file.url, alt: file.name, loading: 'lazy' }),
         el('span', { text: caption }));
     }
+    if (file.kind === 'movie') {
+      return el('a', { class: 'download movie', href: file.url, target: '_blank', rel: 'noopener' },
+        el('span', { text: `▶ Watch ${caption}` }), el('small', { text: `${formatSize(file.size)} · opens in a new tab` }));
+    }
     const size = formatSize(file.size) + (file.kind === 'html' ? ' · interactive map' : '');
     return el('a', { class: 'download', href: file.url, download: file.name },
       el('span', { text: caption }), el('small', { text: size }));

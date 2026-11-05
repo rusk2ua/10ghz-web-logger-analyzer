@@ -47,7 +47,7 @@ def urlopen(req, timeout=30):
 url = sys.argv[1]
 csv = open("tests/fixtures/sample_qso_log.csv").read()
 body = json.dumps({"files": [{"name": "sample_qso_log.csv", "content": csv}], "callsign": "K2UA",
-                   "outputs": ["cabrillo", "summary", "directional_viz", "grid_paths"]}).encode()
+                   "outputs": ["cabrillo", "summary", "directional_viz", "grid_paths", "grid_movie"]}).encode()
 
 def call(path, data=None):
     req = urllib.request.Request(url + path, data=data, headers={"Content-Type": "application/json"})
@@ -85,5 +85,21 @@ if not any(f["output"] == "grid_paths" for f in r["files"]):
 with urlopen(urllib.parse.urljoin(url + "/", r["files"][0]["url"])) as resp:
     assert resp.status == 200
     print(f"OK   download works ({resp.headers.get('Content-Type')}, {len(resp.read())} bytes)")
+# The contest movie must open in the browser tab, not download.
+movie = next((f for f in r["files"] if f["output"] == "grid_movie"), None)
+if not movie:
+    sys.exit("FAIL no contest movie was generated")
+# A browser shows an HTML response in the tab unless it's marked as an
+# attachment or isn't served as HTML; a missing Content-Disposition also plays.
+with urlopen(urllib.parse.urljoin(url + "/", movie["url"])) as resp:
+    disposition = resp.headers.get("Content-Disposition") or ""
+    ctype = resp.headers.get("Content-Type") or ""
+    page = resp.read()
+if b"const DATA" not in page:
+    sys.exit("FAIL the contest movie file isn't the animated page")
+if disposition.lower().startswith("attachment") or not ctype.lower().startswith("text/html"):
+    sys.exit(f"FAIL the contest movie would download instead of playing "
+             f"(Content-Type {ctype!r}, Content-Disposition {disposition!r})")
+print(f"OK   contest movie opens in the browser ({len(page) // 1024} KB)")
 print(f"OK   running analyzer {r['upstream']} and grid-mapper {r.get('gridMapper')}")
 EOF

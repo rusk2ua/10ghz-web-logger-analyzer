@@ -94,13 +94,16 @@
             <span><strong>Path maps</strong><small>A line from your grid to each station worked, labeled with call and km</small></span></label>
           <label class="option"><input type="checkbox" name="outputs" value="grid_density">
             <span><strong>Grid maps</strong><small>Worked grid squares, shaded by number of contacts</small></span></label>
+          <label class="option"><input type="checkbox" name="outputs" value="grid_movie">
+            <span><strong>Contest movie</strong><small>Your whole contest replayed as an animated map: follows you from
+              location to location as each contact is drawn in by band. Plays in your browser.</small></span></label>
         </div>
         <div class="map-extras" id="mapExtras">
           <label><input type="checkbox" id="mapHtml">
             <span><strong>Interactive HTML versions</strong> &ndash; hover or tap a station for call, date and grid
               (open the downloaded <code>.html</code> file in your browser)</span></label>
           <label><input type="checkbox" id="mapOsm">
-            <span><strong>OpenStreetMap street underlay</strong> &ndash; roads and towns under the map
+            <span><strong>OpenStreetMap street underlay</strong> &ndash; roads and towns under the maps and movie
               (adds a few seconds per map)</span></label>
         </div>
         <p class="hint">One map per band &ndash; and per operating location for rovers. Maps take longer to make:
@@ -156,6 +159,13 @@
         CSV and Google Sheets logs are converted to Cabrillo first, so every map uses the grid you operated from on each QSO.
         Coastline and border data: <a href="https://www.naturalearthdata.com/" rel="noopener">Natural Earth</a>;
         street underlay: &copy; <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap</a> contributors.</p>
+      <p>The <strong>contest movie</strong> replays your log in time order. The map follows the grid in your sent
+        exchange from one operating location to the next while a line is drawn to each station as you worked it,
+        colored by band (each band also has its own dash pattern and marker shape). Every operating day plays on
+        one timeline &ndash; both weekends of the 10 GHz and Up contest become one four-day period &ndash; with long
+        breaks and drives fast-forwarded. Use 0.5&times;, 1&times; or 2&times; speed, drag the timeline, switch between
+        the Region, Area and Local zoom levels, tap a band to hide it, or open the table of operating locations.
+        It opens in a new browser tab (phones too); the &ldquo;Download everything&rdquo; .zip keeps a copy.</p>
       <h2>Scoring</h2>
       <p>Distance points (km, rounded up, minimum 1) &times; band multiplier (10 GHz &times;1, 24 &times;2, 47 &times;3,
         75 &times;4, 122 GHz and up &times;5), plus 100 points per unique call per band.</p>

@@ -1,5 +1,5 @@
 repository: https://github.com/rusk2ua/grid-mapper.git
 ref: main
-commit: ef02343dc6f696cef05b780e6b110dce72b54c19
-version: v1.5.1
-synced: 2026-10-31T09:54:16Z
+commit: 359b9bd27969050646ddba27ae5ab5ca55763663
+version: v1.6.0
+synced: 2026-11-05T13:55:46Z

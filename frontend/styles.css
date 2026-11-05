@@ -201,6 +201,8 @@ pre { background: var(--code-bg); padding: 0.8rem 1rem; border-radius: 6px; over
 }
 .download:hover { background: var(--accent-soft); }
 .download small { color: var(--muted); white-space: nowrap; }
+.download.movie { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.download.movie:hover { border-color: var(--accent-strong); }
 
 .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.8rem; }
 .thumb {

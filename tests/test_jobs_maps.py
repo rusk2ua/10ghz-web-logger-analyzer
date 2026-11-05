@@ -1,6 +1,8 @@
 import json
 import time
 
+import pytest
+
 from conftest import fixture_text, get_job, local_file
 
 CSV = {"name": "sample_qso_log.csv", "content": fixture_text("sample_qso_log.csv")}
@@ -128,7 +130,8 @@ def test_map_options_become_grid_mapper_switches(call_api, monkeypatch):
     monkeypatch.setattr(runner, "run_script", spy)
     call_api({"files": [CABRILLO], "outputs": ["grid_density"], "mapOsm": True})
     call_api({"files": [CABRILLO], "outputs": ["grid_paths"], "mapHtml": True})
-    assert calls == [["--osm-basemap"], ["--paths", "--html"]]
+    call_api({"files": [CABRILLO], "outputs": ["grid_movie"], "mapHtml": True, "mapOsm": True})
+    assert calls == [["--osm-basemap"], ["--paths", "--html"], ["--animate-only", "--osm-basemap"]]
 
 
 def test_map_usage_is_recorded(call_api, output_dir):
@@ -160,3 +163,62 @@ def test_street_underlay_applies_to_every_microwave_band(call_api, output_dir):
         assert '"osm": {"opacity"' in by_band[band], band
     assert "2m" in by_band, list(html)  # the 144 MHz QSOs are labelled 2m in the file name
     assert '"osm": null' in by_band["2m"]
+
+
+# ------------------------------------------------------------------ contest movie
+
+def _movie_data(path):
+    import re
+    return json.loads(re.search(r"const DATA = (.*?);\n", path.read_text(encoding="utf-8")).group(1))
+
+
+@pytest.fixture
+def no_background(monkeypatch):
+    """Skip the Natural Earth 10m background (a large first-time download);
+    the movie itself is what's under test here."""
+    import runner
+    monkeypatch.setattr(runner._module("maidenhead_map"), "_animation_background", lambda *a, **k: {})
+
+
+def test_contest_movie_from_cabrillo(call_api, output_dir, no_background):
+    status, body = call_api({"files": [CABRILLO], "outputs": ["grid_movie"]})
+    assert status == 200, body
+    assert body["errors"] == []
+    [movie] = body["files"]
+    assert movie["name"] == "K2UA_contest_animation.html"
+    assert movie["kind"] == "movie" and movie["output"] == "grid_movie"
+    data = _movie_data(local_file(output_dir, movie))
+    assert data["title"] == "K2UA \u00b7 ARRL 10 GHz and Up 2026"
+    assert data["totals"]["qsos"] > 0 and data["totals"]["skipped"] == 0
+    assert all(a["t"] < b["t"] for a, b in zip(data["events"], data["events"][1:]))
+
+
+def test_contest_movie_from_csv(call_api, output_dir, no_background):
+    """A CSV log is converted to Cabrillo first, keeping every QSO's own operating grid."""
+    status, body = call_api({"files": [CSV], "callsign": "K2UA", "outputs": ["grid_movie", "grid_paths"]})
+    assert status == 200, body
+    movies = [f for f in body["files"] if f["output"] == "grid_movie"]
+    assert [f["name"] for f in movies] == ["K2UA_contest_animation.html"]
+    assert len([f for f in body["files"] if f["output"] == "grid_paths"]) == 3   # unaffected
+    data = _movie_data(local_file(output_dir, movies[0]))
+    # The sample rover log goes back to EN91KT on day 2: a revisit is a new stop.
+    assert [s["grid"] for s in data["stops"]] == ["EN91KT", "EN90UV", "EN91KT"]
+    assert [d["label"] for d in data["days"]] == ["Sat Aug 15", "Sun Aug 16"]
+
+
+def test_movie_plays_in_the_browser_other_files_download():
+    import storage
+    assert storage.content_disposition("K2UA_contest_animation.html") == \
+        'inline; filename="K2UA_contest_animation.html"'
+    for name in ("K2UA_ARRL_10GHZ.log", "K2UA_10G_FN32KP_northeastern_grid_paths_map.html", "x.png"):
+        assert storage.content_disposition(name).startswith("attachment; ")
+
+
+def test_movie_usage_counts_as_a_map_analysis(call_api, output_dir, no_background):
+    import usage
+    call_api({"files": [CABRILLO], "outputs": ["grid_movie"], "mapOsm": True})
+    usage.aggregate()
+    stats = json.loads((output_dir / "stats" / "data.json").read_text())
+    assert stats["outputs"].get("grid_movie") == 1
+    assert stats["mapAnalyses"] == 1 and stats["mapOptions"]["OpenStreetMap underlay"] == 1
+
