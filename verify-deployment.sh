@@ -89,13 +89,17 @@ with urlopen(urllib.parse.urljoin(url + "/", r["files"][0]["url"])) as resp:
 movie = next((f for f in r["files"] if f["output"] == "grid_movie"), None)
 if not movie:
     sys.exit("FAIL no contest movie was generated")
+# A browser shows an HTML response in the tab unless it's marked as an
+# attachment or isn't served as HTML; a missing Content-Disposition also plays.
 with urlopen(urllib.parse.urljoin(url + "/", movie["url"])) as resp:
     disposition = resp.headers.get("Content-Disposition") or ""
+    ctype = resp.headers.get("Content-Type") or ""
     page = resp.read()
 if b"const DATA" not in page:
     sys.exit("FAIL the contest movie file isn't the animated page")
-if disposition and not disposition.startswith("inline"):
-    sys.exit(f"FAIL the contest movie would download instead of playing ({disposition})")
+if disposition.lower().startswith("attachment") or not ctype.lower().startswith("text/html"):
+    sys.exit(f"FAIL the contest movie would download instead of playing "
+             f"(Content-Type {ctype!r}, Content-Disposition {disposition!r})")
 print(f"OK   contest movie opens in the browser ({len(page) // 1024} KB)")
 print(f"OK   running analyzer {r['upstream']} and grid-mapper {r.get('gridMapper')}")
 EOF
