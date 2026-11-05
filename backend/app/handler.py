@@ -18,9 +18,9 @@ POST /api/process request body (JSON):
       "sheetsUrl":    "https://docs.google.com/spreadsheets/d/...",          # or this
       "callsign":     "K2UA",      # needed for CSV / Google Sheets logs
       "bandCategory": "AUTO",      # AUTO, 10G or ALL
-      "outputs":      ["cabrillo", "summary", "grid_paths", ...],
+      "outputs":      ["cabrillo", "summary", "grid_paths", "grid_movie", ...],
       "mapHtml":      false,       # grid-mapper --html (interactive map files)
-      "mapOsm":       false        # grid-mapper --osm-basemap (street underlay)
+      "mapOsm":       false        # grid-mapper --osm-basemap (street underlay; maps and movie)
     }
 
 A finished job's result: download URLs for every generated file plus a .zip of
@@ -185,6 +185,8 @@ def parse_request(event):
 
 
 def _file_kind(name):
+    if name.endswith("_contest_animation.html"):
+        return "movie"
     ext = os.path.splitext(name)[1].lower()
     return {".png": "image", ".html": "html"}.get(ext, "text")
 

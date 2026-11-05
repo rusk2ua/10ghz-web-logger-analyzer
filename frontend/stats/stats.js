@@ -14,6 +14,7 @@
     comparison: 'Log comparison',
     grid_paths: 'Path maps',
     grid_density: 'Grid maps',
+    grid_movie: 'Contest movie',
   };
   const ERROR_LABELS = {
     callsign: 'Call sign missing or invalid',

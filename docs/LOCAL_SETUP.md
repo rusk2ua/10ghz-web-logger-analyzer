@@ -115,6 +115,8 @@ Leave this terminal running.
    versions** or **OpenStreetMap street underlay** under *Maps*. Maps take longer (about
    10–20 s for the sample), and the status line shows the elapsed time while you wait. Open a
    downloaded `.html` map in your browser, and hover or tap a station.
+8. **Try the contest movie:** tick **Contest movie** under *Maps* and click Analyze. Click
+   **▶ Watch** in the results to open it in a new tab, then press Play.
 
 Google Sheets works locally as long as your machine can reach docs.google.com. Share the
 sheet as "Anyone with the link can view" and paste the link.

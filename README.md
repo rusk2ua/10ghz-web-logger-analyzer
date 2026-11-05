@@ -12,15 +12,17 @@ and [grid-mapper](https://github.com/rusk2ua/grid-mapper). Anyone can upload a c
 - **maps** from grid-mapper: path maps (a line to each station worked, with call and km) and
   grid-square density maps, per band and per operating location, optionally as interactive
   HTML and with an OpenStreetMap street underlay
+- a **contest movie**: the whole log replayed as an animated map that follows the operator
+  from location to location and draws in each contact by band, playable in any browser
 - a single **.zip** with everything, plus the scoring breakdown and duplicate check
 
 The web app runs both CLI projects' own scripts, vendored unmodified, so its scores,
 reports and maps are identical to the command-line versions. Currently vendored:
-10ghz-log-analyzer **v1.6.2** and grid-mapper **v1.5.1** (see `UPSTREAM.txt` in
+10ghz-log-analyzer **v1.6.2** and grid-mapper **v1.6.0** (see `UPSTREAM.txt` in
 `backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.3.5**. See the [version history](#version-history).
+**v2.4.0**. See the [version history](#version-history).
 
 ## Architecture
 
@@ -335,6 +337,25 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
   result.
 
 ## Version history
+
+### v2.4.0 (2026-11-05): contest movie
+
+- **New output: Contest movie**, from [grid-mapper](https://github.com/rusk2ua/grid-mapper)
+  v1.6.0's `--animate`. The whole log replays as an animated map: it follows the grid in the
+  sent exchange from one operating location to the next and draws a line to each station as
+  it was worked, with a fixed color, dash and marker per band. Every operating day plays on
+  one timeline (both weekends of the 10 GHz and Up contest as one four-day period), with long
+  breaks and drives fast-forwarded. Controls: 0.5×/1×/2× speed, a draggable timeline, fixed
+  Region/Area/Local zoom, band toggles and a table of operating locations. Works on phones.
+- **It plays instead of downloading.** The movie is stored with `Content-Disposition: inline`,
+  so the "▶ Watch" link opens it in a new tab (on a phone, a downloaded `.html` file opens in a
+  preview that doesn't run it). Every other file still downloads; the .zip includes the movie.
+- It gets its own grid-mapper run (`--animate-only`), so it doesn't also draw every per-band
+  map. The OpenStreetMap street underlay option applies to it too.
+- The Lambda image now also bakes Natural Earth's 10m state/province lines, which the movie
+  draws, so no map data is downloaded during a job.
+- `verify-deployment.sh` also requests a movie and checks it opens in the browser.
+- Usage dashboard: "Contest movie" is counted with the other outputs.
 
 ### v2.3.5 (2026-10-31): deploy.sh keeps the budget alert email
 

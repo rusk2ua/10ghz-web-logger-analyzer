@@ -13,6 +13,7 @@ import cartopy.feature as cfeature
 import cartopy.io.img_tiles as cimgt
 from shapely.geometry import box as shapely_box, mapping as shapely_mapping
 from collections import Counter, defaultdict
+from datetime import datetime, timedelta
 
 # Minimum frequency, in MHz, for each band label this script produces.
 # Used to decide whether a band qualifies for the --osm-basemap underlay
@@ -766,16 +767,18 @@ def _build_popup_html(grid, records):
     parts.append('</div>')
     return ''.join(parts)
 
-def _geojson_geoms_for_bbox(feature, lon_min, lon_max, lat_min, lat_max):
+def _geojson_geoms_for_bbox(feature, lon_min, lon_max, lat_min, lat_max, tolerance=None):
     """Extract a cartopy Feature's geometries as plain GeoJSON geometry
     dicts, clipped and simplified to the given lon/lat bounding box so the
     embedded --html output stays a reasonable size. Returns [] (background
-    for that layer simply omitted) if the geometry can't be read."""
+    for that layer simply omitted) if the geometry can't be read. tolerance
+    (degrees) overrides the default simplification, which scales with the box."""
     geoms = []
     try:
         bbox_poly = shapely_box(lon_min, lat_min, lon_max, lat_max)
         span = max(lon_max - lon_min, 0.01)
-        tolerance = max(span / 800, 0.0005)
+        if tolerance is None:
+            tolerance = max(span / 800, 0.0005)
         for geom in feature.geometries():
             try:
                 if not geom.intersects(bbox_poly):
@@ -1396,6 +1399,1019 @@ def create_grid_map_html(grids, qso_records, callsign, band, continents=None, ou
     print(f"Interactive map saved as {output_file}")
     print(f"{band}: {len(valid_grids)} unique grid squares, {sum(valid_grids.values())} contacts (HTML)")
 
+# ---------------------------------------------------------------------------
+# --animate: a "movie" of a whole contest log
+# ---------------------------------------------------------------------------
+# One self-contained Leaflet page that replays the log in time order: the map
+# follows the station from one operating location to the next while a line to
+# each worked station is drawn in as the contact is made, colored by band.
+#
+# Band styling. Each contest band has a fixed color (never re-assigned when a
+# log uses fewer bands), taken from a dark-surface categorical palette that
+# passes the adjacent-pair color-vision checks. Any two bands can be on screen
+# together, so color is never the only cue: every band also has its own line
+# dash pattern and endpoint marker shape, and the legend names and counts them.
+_ANIMATION_BAND_STYLES = [
+    # band,  color,     dash pattern,   marker shape
+    ('10G',  '#3987e5', None,           'circle'),
+    ('24G',  '#d95926', '9 5',          'square'),
+    ('47G',  '#199e70', '2 4',          'diamond'),
+    ('75G',  '#c98500', '10 4 2 4',     'triangle'),
+    ('123G', '#d55181', '15 6',         'triangle-down'),
+    ('134G', '#008300', '4 3',          'hexagon'),
+    ('241G', '#9085e9', '12 3 3 3 3 3', 'plus'),
+    ('300G', '#e66767', '1 5',          'star'),
+]
+_ANIMATION_OTHER_COLOR = '#8f948f'
+_ANIMATION_OTHER_MARKERS = ['circle', 'square', 'diamond', 'triangle', 'triangle-down', 'hexagon', 'plus', 'star']
+_ANIMATION_OTHER_DASHES = [None, '9 5', '2 4', '10 4 2 4', '15 6', '4 3', '12 3 3 3 3 3', '1 5']
+
+# Playback timing, in animation seconds at 1x speed.
+_ANIM_LEAD = 2.0          # title card before the first contact
+_ANIM_TAIL = 3.0          # hold on the finished picture
+_ANIM_MIN_SPACING = 0.15  # so a burst of same-minute contacts still plays one after another
+_ANIM_IDLE_GAP = 1.0      # a long break at the same location, fast-forwarded
+_ANIM_MOVE_BASE = 1.8     # relocating to a new operating grid...
+_ANIM_MOVE_PER_KM = 1 / 300.0   # ...plus a little longer for longer drives
+_ANIM_MOVE_MAX = 4.5
+_ANIM_WEEKEND_EXTRA = 1.6 # extra beat for the title card when a new weekend starts
+
+
+def default_animation_seconds(n_contacts, n_moves):
+    """Movie length at 1x when --animate-seconds isn't given: about two
+    minutes for a busy multi-location log, under a minute for a small one."""
+    return max(40.0, min(150.0, 30.0 + 0.3 * n_contacts + 2.5 * n_moves))
+
+
+def _parse_qso_datetime(date_text, time_text):
+    """UTC datetime from a QSO's date (YYYY-MM-DD) and time (HHMM, HH:MM,
+    HH:MM:SS or a bare number such as 937 or 937.0). Returns None if either
+    can't be understood."""
+    try:
+        date_part = datetime.strptime(str(date_text).strip()[:10], '%Y-%m-%d')
+        time_text = str(time_text).strip()
+        if re.fullmatch(r'\d+\.0*', time_text):   # 937.0 from a spreadsheet column
+            time_text = time_text.split('.')[0]
+        digits = ''.join(ch for ch in time_text if ch.isdigit())
+        if not digits:
+            return None
+        digits = digits.zfill(4)[:4]
+        hours, minutes = int(digits[:2]), int(digits[2:])
+        if hours > 23 or minutes > 59:
+            return None
+        return date_part.replace(hour=hours, minute=minutes)
+    except (ValueError, TypeError):
+        return None
+
+
+def _animation_band_styles(bands):
+    """Style dicts (band, color, dash, marker) for the bands in a log, in
+    ascending frequency order. Contest bands keep their fixed style."""
+    fixed = {b: (c, d, m) for b, c, d, m in _ANIMATION_BAND_STYLES}
+    ordered = sorted(set(bands), key=lambda b: (band_min_freq_mhz(b) is None, band_min_freq_mhz(b) or 0, b))
+    free_slots = [s for s in _ANIMATION_BAND_STYLES if s[0] not in ordered]
+    styles = []
+    for band in ordered:
+        if band in fixed:
+            color, dash, marker = fixed[band]
+        elif free_slots:
+            _, color, dash, marker = free_slots.pop(0)
+        else:
+            n = len(styles)
+            color, dash, marker = (_ANIMATION_OTHER_COLOR, _ANIMATION_OTHER_DASHES[n % 8],
+                                   _ANIMATION_OTHER_MARKERS[n % 8])
+        styles.append({'band': band, 'color': color, 'dash': dash, 'marker': marker})
+    return styles
+
+
+def _animation_total_seconds(gaps, spans, k):
+    return _ANIM_LEAD + _ANIM_TAIL + sum(gaps) + sum(max(_ANIM_MIN_SPACING, m * k) for m in spans)
+
+
+def build_animation_data(qso_records_by_band, fallback_home_grid=None, target_seconds=None,
+                         gap_minutes=45.0):
+    """Turn a log into the timeline the --animate page plays.
+
+    qso_records_by_band is what parse_cabrillo_grids/parse_csv_grids return.
+    Every worked contact becomes an event on one clock. Quiet stretches (more
+    than gap_minutes with no contact) and relocations are fast-forwarded, and
+    the rest of the time is stretched so the whole movie lasts about
+    target_seconds at 1x (default: default_animation_seconds). Operating days are counted by the station's local
+    solar date (UTC shifted by longitude/15 hours), so an evening session that
+    crosses 0000Z stays on its own day; consecutive days form a weekend, and
+    all weekends play back to back as one period.
+
+    Returns None if the log has no contact with a time, a worked grid and an
+    operating grid. Otherwise a JSON-ready dict (see create_animation_html).
+    """
+    flat, skipped = [], 0
+    for band, records in qso_records_by_band.items():
+        for rec in records:
+            home = (rec.get('home_grid') or fallback_home_grid or '').upper() or None
+            when = _parse_qso_datetime(rec.get('date'), rec.get('time'))
+            there = grid_center(rec['grid']) if rec.get('grid') else None
+            here = grid_center(home) if home else None
+            if not (when and there and here):
+                skipped += 1
+                continue
+            flat.append({
+                'order': len(flat), 'band': band, 'call': rec.get('call') or 'Unknown',
+                'grid': rec['grid'].upper(), 'home': home, 'when': when,
+                'lat': there[0], 'lon': there[1], 'hlat': here[0], 'hlon': here[1],
+                'km': grid_distance_km(home, rec['grid']),
+            })
+    if not flat:
+        return None
+    flat.sort(key=lambda e: (e['when'], e['order']))
+
+    # Operating stops: runs of consecutive contacts from the same grid. Going
+    # back to an earlier grid later in the log is a new stop.
+    stops = []
+    for event in flat:
+        if not stops or stops[-1]['grid'] != event['home']:
+            stops.append({'grid': event['home'], 'lat': event['hlat'], 'lon': event['hlon'],
+                          'first': None, 'last': None, 'n': 0})
+        event['stop'] = len(stops) - 1
+
+    def solar_date(event):
+        return (event['when'] + timedelta(hours=event['hlon'] / 15.0)).date()
+
+    # Days -> weekends.
+    dates = sorted({solar_date(e) for e in flat})
+    day_of = {d: i for i, d in enumerate(dates)}
+    weekend_of, weekend = {}, 0
+    for i, d in enumerate(dates):
+        if i and (d - dates[i - 1]).days > 1:
+            weekend += 1
+        weekend_of[d] = weekend
+    for event in flat:
+        d = solar_date(event)
+        event['day'], event['weekend'] = day_of[d], weekend_of[d]
+
+    # Timeline. Between consecutive contacts there's either live action, a
+    # quiet stretch, a relocation or the jump to a new weekend. Fixed-length
+    # gaps are fixed; the live action is scaled so the movie hits the target.
+    kinds, gap_secs, span_mins, move_km = [None], [], [], [0.0]
+    for prev, cur in zip(flat, flat[1:]):
+        span = (cur['when'] - prev['when']).total_seconds() / 60.0
+        moved = cur['stop'] != prev['stop']
+        km = grid_distance_km(prev['home'], cur['home']) if moved else 0.0
+        move_km.append(km)
+        if cur['weekend'] != prev['weekend']:
+            kind = 'weekend'
+            secs = (min(_ANIM_MOVE_MAX, _ANIM_MOVE_BASE + km * _ANIM_MOVE_PER_KM) if moved
+                    else 2.5) + _ANIM_WEEKEND_EXTRA
+        elif moved:
+            kind, secs = 'move', min(_ANIM_MOVE_MAX, _ANIM_MOVE_BASE + km * _ANIM_MOVE_PER_KM)
+        elif span > gap_minutes:
+            kind, secs = 'idle', _ANIM_IDLE_GAP
+        else:
+            kind, secs = 'active', None
+        kinds.append(kind)
+        if secs is None:
+            span_mins.append(span)
+        else:
+            gap_secs.append(secs)
+    if target_seconds is None:
+        target_seconds = default_animation_seconds(len(flat), len(stops) - 1)
+    lo, hi = 0.0, 1000.0
+    if _animation_total_seconds(gap_secs, span_mins, 0.0) < target_seconds:
+        for _ in range(60):
+            mid = (lo + hi) / 2
+            if _animation_total_seconds(gap_secs, span_mins, mid) > target_seconds:
+                hi = mid
+            else:
+                lo = mid
+    k = lo
+
+    times, t = [], _ANIM_LEAD
+    gap_iter, span_iter = iter(gap_secs), iter(span_mins)
+    for i, kind in enumerate(kinds):
+        if i:
+            t += next(gap_iter) if kind != 'active' else max(_ANIM_MIN_SPACING, next(span_iter) * k)
+        times.append(t)
+    duration = t + _ANIM_TAIL
+
+    # Relocation glides, and the labelled gaps the page shows while fast-forwarding.
+    moves, segments = [], []
+    for i in range(1, len(flat)):
+        a, b = flat[i - 1], flat[i]
+        if kinds[i] in ('move', 'weekend', 'idle'):
+            segments.append({
+                't0': round(times[i - 1], 3), 't1': round(times[i], 3), 'kind': kinds[i],
+                'from': a['stop'], 'to': b['stop'], 'km': round(move_km[i]),
+                'minutes': round((b['when'] - a['when']).total_seconds() / 60.0),
+                'weekend': b['weekend'] + 1,
+            })
+        if a['stop'] != b['stop']:
+            moves.append({'t0': round(times[i - 1] + 0.5, 3), 't1': round(times[i] - 0.6, 3),
+                          'from': a['stop'], 'to': b['stop']})
+
+    # Bands, stops and days.
+    bands = _animation_band_styles(e['band'] for e in flat)
+    band_index = {b['band']: i for i, b in enumerate(bands)}
+    for b in bands:
+        b['n'] = 0
+    for i, e in enumerate(flat):
+        bands[band_index[e['band']]]['n'] += 1
+        s = stops[e['stop']]
+        if s['first'] is None:
+            s['first'], s['counts'] = i, [0] * len(bands)
+        s['last'] = i
+        s['n'] += 1
+        s['counts'][band_index[e['band']]] += 1
+    epoch = lambda dtm: int((dtm - datetime(1970, 1, 1)).total_seconds() // 60)
+    for s in stops:
+        s['t'] = round(times[s['first']], 3)
+        s['utc0'], s['utc1'] = epoch(flat[s['first']]['when']), epoch(flat[s['last']]['when'])
+        s['day0'], s['day1'] = flat[s['first']]['day'], flat[s['last']]['day']
+    days = []
+    for di, d in enumerate(dates):
+        first = next(i for i, e in enumerate(flat) if e['day'] == di)
+        days.append({'label': d.strftime('%a %b ') + str(d.day), 'weekend': weekend_of[d] + 1,
+                     'first': first, 't': round(times[first], 3)})
+
+    events = [{
+        't': round(times[i], 3), 'lat': round(e['lat'], 4), 'lon': round(e['lon'], 4),
+        'call': e['call'], 'grid': e['grid'], 'band': band_index[e['band']], 'stop': e['stop'],
+        'km': round(e['km']), 'utc': epoch(e['when']), 'day': e['day'],
+    } for i, e in enumerate(flat)]
+    clock = [[round(times[0] - _ANIM_LEAD, 3), events[0]['utc']]] + [[ev['t'], ev['utc']] for ev in events]
+
+    # Camera: three fixed zoom levels. "Area" is the one where a typical long
+    # contact (90th percentile) still fits comfortably around the station.
+    kms = sorted(e['km'] for e in events)
+    reach_km = max(25.0, kms[min(len(kms) - 1, int(len(kms) * 0.9))])
+    mid_lat = sum(s['lat'] for s in stops) / len(stops)
+    area = math.floor(math.log2(156543.03 * math.cos(math.radians(mid_lat)) * 260 / (reach_km * 1000.0)))
+    area = max(5, min(11, area))
+    zooms = {'region': area - 1, 'area': area, 'local': area + 1}
+
+    points = [(s['lat'], s['lon']) for s in stops] + [(e['lat'], e['lon']) for e in events]
+    return {
+        'events': events, 'stops': stops, 'bands': bands, 'days': days, 'moves': moves,
+        'segments': segments, 'clock': clock, 'duration': round(duration, 3), 'zooms': zooms,
+        'bounds': [[min(p[0] for p in points), min(p[1] for p in points)],
+                   [max(p[0] for p in points), max(p[1] for p in points)]],
+        'totals': {'qsos': len(events), 'calls': len({e['call'] for e in events}),
+                   'stops': len(stops), 'days': len(days), 'weekends': weekend + 1,
+                   'skipped': skipped, 'secondsPerMinute': round(k, 4)},
+    }
+
+
+_ANIMATION_PAGE_TEMPLATE = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    color-scheme: dark;
+    --surface-0: #0e1217;      /* page, ocean */
+    --surface-1: #1f242b;      /* land */
+    --panel: rgba(14, 18, 23, 0.88);
+    --panel-edge: #2c333c;
+    --ink-1: #f0efec;
+    --ink-2: #c3c2b7;
+    --ink-3: #8f948f;
+    --focus: #f0efec;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--surface-0); color: var(--ink-1);
+    font: 14px/1.4 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; overflow: hidden; }
+  [hidden] { display: none !important; }
+  #map { position: absolute; inset: 0; background: var(--surface-0); }
+  .leaflet-container { background: var(--surface-0); font: inherit; }
+  .leaflet-control-attribution { background: rgba(14,18,23,.7) !important; color: var(--ink-3) !important; font-size: 10px; }
+  .leaflet-control-attribution a { color: var(--ink-2) !important; }
+  .panel { position: absolute; z-index: 1000; background: var(--panel); border: 1px solid var(--panel-edge);
+    border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.35); backdrop-filter: blur(6px); }
+  button { font: inherit; color: var(--ink-1); background: transparent; border: 1px solid var(--panel-edge);
+    border-radius: 7px; padding: 5px 10px; cursor: pointer; }
+  button:hover { border-color: var(--ink-3); }
+  button[aria-pressed="true"] { background: var(--ink-1); color: var(--surface-0); border-color: var(--ink-1); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  #hud { top: 14px; left: 14px; padding: 12px 14px 12px; width: 268px; }
+  #hud .who { font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--ink-3); }
+  #hud .day { margin-top: 6px; font-size: 13px; color: var(--ink-2); }
+  #hud .clock { font: 600 30px/1.1 ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: .02em; }
+  #hud .clock small { font-size: 13px; color: var(--ink-3); margin-left: 4px; }
+  #hud .where { margin-top: 8px; font-size: 13px; color: var(--ink-2); min-height: 19px; }
+  #hud .where b { color: var(--ink-1); font-weight: 600; }
+  #hud .stats { display: flex; gap: 18px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--panel-edge); }
+  #hud .stat .n { font: 600 20px/1.1 ui-monospace, Menlo, Consolas, monospace; }
+  #hud .stat .l { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; }
+
+  #legend { top: 14px; right: 14px; padding: 10px 10px 8px; width: 200px; }
+  #legend h2, #table-panel h2 { margin: 0 4px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--ink-3); }
+  .leg { display: flex; align-items: center; gap: 8px; width: 100%; border: 1px solid transparent;
+    padding: 4px 6px; margin-bottom: 2px; text-align: left; }
+  .leg[aria-pressed="false"] { opacity: .4; }
+  .leg[aria-pressed="false"] .name { text-decoration: line-through; }
+  .leg[aria-pressed] { background: transparent; color: var(--ink-1); }
+  .leg .name { flex: 1; }
+  .leg .count { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--ink-2); }
+  #legend .hint { margin: 6px 4px 0; font-size: 11px; color: var(--ink-3); }
+
+  #zoom { top: auto; right: 14px; bottom: 96px; padding: 6px; display: flex; gap: 6px; }
+
+  #controls { left: 14px; right: 14px; bottom: 14px; padding: 10px 12px; display: flex; align-items: center; gap: 10px; }
+  #controls .group { display: flex; gap: 4px; }
+  #play { min-width: 44px; font-size: 16px; }
+  #track { position: relative; flex: 1; height: 36px; }
+  #scrub { position: absolute; left: 0; right: 0; top: 0; width: 100%; height: 22px; margin: 0; accent-color: var(--ink-1); }
+  #ticks { position: absolute; left: 0; right: 0; top: 21px; height: 14px; pointer-events: none; }
+  #ticks span { position: absolute; transform: translateX(-1px); border-left: 1px solid var(--ink-3);
+    height: 6px; font-size: 10px; color: var(--ink-3); padding-left: 3px; white-space: nowrap; line-height: 13px; }
+  #remain { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--ink-2); min-width: 46px; text-align: right; }
+
+  #banner { left: 50%; top: 14px; transform: translateX(-50%); padding: 7px 14px; font-size: 13px; color: var(--ink-2);
+    white-space: nowrap; transition: opacity .25s; }
+  #card { left: 50%; top: 38%; transform: translate(-50%, -50%); padding: 18px 28px; text-align: center;
+    pointer-events: none; transition: opacity .35s; }
+  #card .k { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+  #card .v { font-size: 26px; font-weight: 700; margin-top: 2px; }
+  #start { left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 24px 28px; text-align: center; max-width: 92vw; }
+  #start h1 { margin: 0 0 6px; font-size: 22px; }
+  #start p { margin: 0 0 16px; color: var(--ink-2); }
+  #start button { font-size: 16px; padding: 10px 22px; background: var(--ink-1); color: var(--surface-0); border-color: var(--ink-1); }
+
+  #table-panel { right: 14px; top: 14px; max-height: calc(100vh - 110px); width: min(700px, calc(100vw - 28px));
+    padding: 12px; overflow: auto; z-index: 1100; }
+  #table-panel table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  #table-panel th, #table-panel td { padding: 5px 7px; border-bottom: 1px solid var(--panel-edge); text-align: right; white-space: nowrap; }
+  #table-panel th { color: var(--ink-3); font-weight: 600; }
+  #table-panel th:nth-child(-n+4), #table-panel td:nth-child(-n+4) { text-align: left; }
+  #table-panel .close { float: right; }
+
+  .qso-mark svg, .station svg { display: block; overflow: visible; }
+  .qso-tip, .stop-tip { background: var(--panel); color: var(--ink-1); border: 1px solid var(--panel-edge);
+    border-radius: 6px; box-shadow: none; font-size: 12px; }
+  .qso-tip::before, .stop-tip::before { display: none; }
+  .station-tip { background: var(--ink-1); color: var(--surface-0); border: none; font-weight: 700;
+    font-size: 12px; padding: 2px 6px; box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+  .station-tip::before { border-top-color: var(--ink-1) !important; }
+  .station .ring { position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; margin: -17px 0 0 -17px;
+    border: 2px solid var(--ink-1); border-radius: 50%; opacity: 0; animation: ping 2.4s ease-out infinite; }
+  @keyframes ping { 0% { transform: scale(.35); opacity: .8; } 100% { transform: scale(1.4); opacity: 0; } }
+  .call-flash { color: var(--ink-1); font-weight: 700; font-size: 12px; white-space: nowrap;
+    text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 6px #000; animation: flash 2.2s ease-out forwards; pointer-events: none; }
+  @keyframes flash { 0% { opacity: 0; transform: translateY(4px); } 12% { opacity: 1; transform: none; }
+    70% { opacity: 1; } 100% { opacity: 0; } }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .station .ring, .call-flash { animation: none; }
+    .call-flash { display: none; }
+  }
+  @media (max-width: 720px) {
+    #hud { top: 10px; left: 10px; right: 10px; width: auto; padding: 9px 12px; }
+    #hud .who { font-size: 11px; }
+    #hud .day { margin-top: 2px; font-size: 12px; }
+    #hud .clock { font-size: 22px; }
+    #hud .where { margin-top: 4px; font-size: 12px; }
+    #hud .stats { gap: 16px; margin-top: 6px; padding-top: 6px; }
+    #hud .stat .n { font-size: 16px; }
+    #legend { top: auto; right: 10px; left: 10px; bottom: 112px; width: auto; padding: 5px;
+      display: flex; flex-wrap: wrap; gap: 2px; }
+    #legend h2, #legend .hint { display: none; }
+    #legend-rows { display: contents; }
+    .leg { width: auto; margin: 0; padding: 2px 6px; gap: 5px; font-size: 12px; }
+    .leg svg { width: 32px; }
+    #zoom { top: 50%; bottom: auto; right: 10px; transform: translateY(-50%); flex-direction: column; padding: 4px; gap: 4px; }
+    #zoom button { padding: 5px 8px; font-size: 12px; }
+    #banner { top: auto; bottom: 168px; max-width: calc(100vw - 20px); overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+    #controls { left: 10px; right: 10px; bottom: 10px; padding: 8px 10px 6px; flex-wrap: wrap; gap: 6px; }
+    #controls button { padding: 4px 8px; }
+    #play { min-width: 40px; }
+    #track { order: 9; flex-basis: 100%; height: 34px; }
+    #remain { margin-left: auto; min-width: 0; }
+    #table-panel { left: 10px; right: 10px; width: auto; top: 10px; max-height: calc(100vh - 120px); }
+  }
+</style>
+</head>
+<body>
+<div id="map" role="img" aria-label="__TITLE__"></div>
+
+<div id="hud" class="panel">
+  <div class="who" id="who"></div>
+  <div class="day" id="day"></div>
+  <div class="clock"><span id="clock">--:--</span><small id="clock-date">UTC</small></div>
+  <div class="where" id="where"></div>
+  <div class="stats">
+    <div class="stat"><div class="n" id="n-qsos">0</div><div class="l">QSOs</div></div>
+    <div class="stat"><div class="n" id="n-calls">0</div><div class="l">Stations</div></div>
+    <div class="stat"><div class="n" id="n-stop">0</div><div class="l">Location</div></div>
+  </div>
+</div>
+
+<div id="legend" class="panel" aria-label="Bands">
+  <h2>Bands</h2>
+  <div id="legend-rows"></div>
+  <p class="hint">Click a band to hide or show it.</p>
+</div>
+
+<div id="zoom" class="panel" role="group" aria-label="Zoom level">
+  <button type="button" data-zoom="region">Region</button>
+  <button type="button" data-zoom="area">Area</button>
+  <button type="button" data-zoom="local">Local</button>
+</div>
+
+<div id="banner" class="panel" hidden></div>
+<div id="card" class="panel" hidden><div class="k" id="card-k"></div><div class="v" id="card-v"></div></div>
+
+<div id="controls" class="panel">
+  <button type="button" id="play" aria-label="Play">&#9654;</button>
+  <button type="button" id="restart" aria-label="Restart">&#8634;</button>
+  <div class="group" role="group" aria-label="Playback speed">
+    <button type="button" data-speed="0.5">0.5&times;</button>
+    <button type="button" data-speed="1" aria-pressed="true">1&times;</button>
+    <button type="button" data-speed="2">2&times;</button>
+  </div>
+  <div id="track">
+    <input id="scrub" type="range" min="0" max="1000" step="1" value="0" aria-label="Position in the contest">
+    <div id="ticks"></div>
+  </div>
+  <span id="remain" aria-label="Time remaining">0:00</span>
+  <button type="button" id="table-btn" aria-expanded="false" aria-controls="table-panel">Table</button>
+</div>
+
+<div id="table-panel" class="panel" hidden>
+  <button type="button" class="close" id="table-close">Close</button>
+  <h2>Operating locations</h2>
+  <table id="table"></table>
+</div>
+
+<div id="start" class="panel">
+  <h1 id="start-title"></h1>
+  <p id="start-sub"></p>
+  <button type="button" id="start-btn">&#9654;&ensp;Play</button>
+</div>
+<div id="live" class="sr-only" aria-live="polite"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const DATA = __DATA_JSON__;
+(function () {
+  'use strict';
+  var D = DATA, E = D.events, S = D.stops, B = D.bands, DUR = D.duration;
+  var $ = function (id) { return document.getElementById(id); };
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var GROW = 0.45;          // animation seconds for a contact line to draw in
+  var MAX_FLASHES = 10;
+
+  function text(id, s) { var el = $(id); if (el.textContent !== s) el.textContent = s; }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function utcLabel(min) { var d = new Date(min * 60000); return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()); }
+  function utcDate(min) { var d = new Date(min * 60000); return MONTHS[d.getUTCMonth()] + ' ' + d.getUTCDate(); }
+  function utcStamp(min) { return utcDate(min) + ' ' + utcLabel(min) + 'Z'; }
+  function utcSpan(a, b) {
+    return utcDate(a) === utcDate(b) ? utcDate(a) + ' ' + utcLabel(a) + '–' + utcLabel(b) + 'Z'
+                                     : utcStamp(a) + ' – ' + utcStamp(b);
+  }
+  function mmss(sec) { sec = Math.max(0, Math.round(sec)); return Math.floor(sec / 60) + ':' + pad(sec % 60); }
+  function ease(x) { return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; }
+  function lerp(a, b, f) { return a + (b - a) * f; }
+
+  // Marker shapes: the second, color-independent cue for each band.
+  var SHAPES = {
+    'circle': '<circle r="4.2"/>',
+    'square': '<rect x="-3.8" y="-3.8" width="7.6" height="7.6"/>',
+    'diamond': '<polygon points="0,-5.2 5.2,0 0,5.2 -5.2,0"/>',
+    'triangle': '<polygon points="0,-5.2 5,4 -5,4"/>',
+    'triangle-down': '<polygon points="0,5.2 5,-4 -5,-4"/>',
+    'hexagon': '<polygon points="4.6,0 2.3,4 -2.3,4 -4.6,0 -2.3,-4 2.3,-4"/>',
+    'plus': '<polygon points="-1.8,-5 1.8,-5 1.8,-1.8 5,-1.8 5,1.8 1.8,1.8 1.8,5 -1.8,5 -1.8,1.8 -5,1.8 -5,-1.8 -1.8,-1.8"/>',
+    'star': '<polygon points="0,-5.5 1.6,-1.7 5.5,-1.7 2.4,0.8 3.5,4.8 0,2.4 -3.5,4.8 -2.4,0.8 -5.5,-1.7 -1.6,-1.7"/>'
+  };
+  function markSvg(band, size) {
+    return '<svg width="' + size + '" height="' + size + '" viewBox="-7 -7 14 14"><g fill="' + band.color +
+      '" stroke="#0e1217" stroke-width="1.6">' + (SHAPES[band.marker] || SHAPES.circle) + '</g></svg>';
+  }
+  function swatchSvg(band) {
+    return '<svg width="44" height="14" viewBox="0 0 44 14" aria-hidden="true"><line x1="1" y1="7" x2="33" y2="7" stroke="' +
+      band.color + '" stroke-width="2.5"' + (band.dash ? ' stroke-dasharray="' + band.dash + '"' : '') +
+      '/><g transform="translate(37 7)" fill="' + band.color + '" stroke="#0e1217" stroke-width="1.6">' +
+      (SHAPES[band.marker] || SHAPES.circle) + '</g></svg>';
+  }
+
+  // ------------------------------------------------------------------ map
+  var map = L.map('map', {
+    zoomControl: false, dragging: false, touchZoom: false, scrollWheelZoom: false,
+    doubleClickZoom: false, boxZoom: false, keyboard: false, tap: false,
+    zoomSnap: 1, inertia: false, fadeAnimation: false, zoomAnimation: !reduceMotion
+  });
+  map.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>');
+  map.attributionControl.addAttribution('Natural Earth');
+  var canvas = L.canvas({ padding: 0.6 });
+  var zoomKey = 'area';
+  map.setView([S[0].lat, S[0].lon], D.zooms[zoomKey]);
+
+  if (D.osm) {
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      opacity: D.osm.opacity, maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+  }
+  var bg = D.background || {};
+  function addGeoms(geoms, style) {
+    (geoms || []).forEach(function (g) {
+      L.geoJSON(g, { style: style, renderer: canvas, interactive: false }).addTo(map);
+    });
+  }
+  var landFill = D.osm ? 0.25 : 1;
+  addGeoms(bg.land, { stroke: false, fillColor: '#1f242b', fillOpacity: landFill });
+  addGeoms(bg.lakes, { color: '#3a4a5c', weight: 0.8, fillColor: '#0e1217', fillOpacity: landFill });
+  addGeoms(bg.states, { color: '#363e49', weight: 0.8, dashArray: '3 3', fill: false });
+  addGeoms(bg.borders, { color: '#4f5a68', weight: 1.2, fill: false });
+  addGeoms(bg.coastline, { color: '#3e4a59', weight: 1, fill: false });
+
+  // Where the operator has been: a faint dotted trail and a ring at each past stop.
+  var trail = L.polyline([], { renderer: canvas, color: '#c3c2b7', weight: 1.5, opacity: 0.55,
+    dashArray: '1 6', lineCap: 'round', interactive: false }).addTo(map);
+  var stopRings = S.map(function (s, i) {
+    var ring = L.circleMarker([s.lat, s.lon], { renderer: canvas, radius: 5, color: '#c3c2b7', weight: 1.5,
+      fillColor: '#0e1217', fillOpacity: 1, opacity: 0.9 });
+    var tip = document.createElement('div');
+    var head = document.createElement('b'); head.textContent = s.grid; tip.appendChild(head);
+    tip.appendChild(document.createTextNode(' · ' + s.n + ' QSO' + (s.n === 1 ? '' : 's') +
+      ' · ' + utcSpan(s.utc0, s.utc1)));
+    ring.bindTooltip(tip, { direction: 'top', className: 'stop-tip', offset: [0, -4] });
+    return ring;
+  });
+
+  var station = L.marker([S[0].lat, S[0].lon], {
+    icon: L.divIcon({ className: 'station', iconSize: [18, 18], iconAnchor: [9, 9],
+      html: '<span class="ring"></span><svg width="18" height="18" viewBox="-9 -9 18 18">' +
+        '<circle r="7" fill="#0e1217" stroke="#f0efec" stroke-width="2.4"/><circle r="3" fill="#f0efec"/></svg>' }),
+    keyboard: false, interactive: false, zIndexOffset: 1000
+  }).addTo(map);
+  station.bindTooltip(S[0].grid, { permanent: true, direction: 'top', offset: [0, -11], className: 'station-tip' });
+
+  // ------------------------------------------------------------------ contacts
+  var visible = B.map(function () { return true; });
+  var layers = [];             // per event: {line, mark, done}
+  var shown = 0;               // events [0, shown) have layers on the map
+  var flashes = [];
+  var litStop = -1;            // stop whose lines are drawn bright (-1 while relocating)
+
+  function lineStyle(e) {
+    var b = B[e.band];
+    var on = visible[e.band];
+    return { color: b.color, weight: e.stop === litStop ? 2.2 : 1.6, dashArray: b.dash || null,
+      opacity: on ? (e.stop === litStop ? 0.95 : 0.3) : 0 };
+  }
+  function markOpacity(e) { return visible[e.band] ? (e.stop === litStop ? 1 : 0.45) : 0; }
+
+  function tipFor(e) {
+    var b = B[e.band], s = S[e.stop];
+    var el = document.createElement('div');
+    var c = document.createElement('b'); c.textContent = e.call; el.appendChild(c);
+    el.appendChild(document.createTextNode(' · ' + b.band + ' · ' + e.grid));
+    el.appendChild(document.createElement('br'));
+    el.appendChild(document.createTextNode(e.km + ' km from ' + s.grid + ' · ' + utcStamp(e.utc)));
+    return el;
+  }
+
+  function addContact(i, animated) {
+    var e = E[i], s = S[e.stop];
+    var line = L.polyline([[s.lat, s.lon], animated ? [s.lat, s.lon] : [e.lat, e.lon]],
+      Object.assign({ renderer: canvas, interactive: false, lineCap: 'round' }, lineStyle(e))).addTo(map);
+    var mark = L.marker([e.lat, e.lon], {
+      icon: L.divIcon({ className: 'qso-mark', html: markSvg(B[e.band], 12), iconSize: [12, 12], iconAnchor: [6, 6] }),
+      keyboard: false, opacity: animated ? 0 : markOpacity(e)
+    }).addTo(map);
+    mark.bindTooltip(tipFor(e), { direction: 'top', offset: [0, -6], className: 'qso-tip' });
+    layers[i] = { line: line, mark: mark, done: !animated };
+    if (animated && !reduceMotion) flash(e);
+  }
+
+  function removeContact(i) {
+    var l = layers[i];
+    if (!l) return;
+    map.removeLayer(l.line); map.removeLayer(l.mark);
+    layers[i] = null;
+  }
+
+  function flash(e) {
+    var f = L.marker([e.lat, e.lon], { interactive: false, keyboard: false,
+      icon: L.divIcon({ className: '', iconSize: [0, 0], iconAnchor: [-8, 18],
+        html: '<div class="call-flash"></div>' }) }).addTo(map);
+    f.getElement().firstChild.textContent = e.call;
+    flashes.push(f);
+    while (flashes.length > MAX_FLASHES) map.removeLayer(flashes.shift());
+    setTimeout(function () {
+      var k = flashes.indexOf(f);
+      if (k >= 0) { flashes.splice(k, 1); map.removeLayer(f); }
+    }, 2300);
+  }
+  function clearFlashes() { flashes.forEach(function (f) { map.removeLayer(f); }); flashes = []; }
+
+  function restyleAll() {
+    for (var i = 0; i < shown; i++) {
+      var l = layers[i]; if (!l) continue;
+      l.line.setStyle(lineStyle(E[i]));
+      if (l.done) l.mark.setOpacity(markOpacity(E[i]));
+    }
+  }
+
+  // ------------------------------------------------------------------ prefix counts
+  var calls = [0], seen = {}, bandCounts = B.map(function () { return [0]; });
+  E.forEach(function (e, i) {
+    if (!seen[e.call]) { seen[e.call] = 1; calls.push(calls[i] + 1); } else calls.push(calls[i]);
+    B.forEach(function (b, k) { bandCounts[k].push(bandCounts[k][i] + (e.band === k ? 1 : 0)); });
+  });
+
+  // ------------------------------------------------------------------ timeline lookups
+  function countAt(T) {             // number of contacts made by time T
+    var lo = 0, hi = E.length;
+    while (lo < hi) { var mid = (lo + hi) >> 1; if (E[mid].t <= T) lo = mid + 1; else hi = mid; }
+    return lo;
+  }
+  function clockAt(T) {
+    var C = D.clock;
+    if (T <= C[0][0]) return C[0][1];
+    for (var i = 1; i < C.length; i++) {
+      if (T <= C[i][0]) {
+        var f = (T - C[i - 1][0]) / Math.max(1e-6, C[i][0] - C[i - 1][0]);
+        return lerp(C[i - 1][1], C[i][1], f);
+      }
+    }
+    return C[C.length - 1][1];
+  }
+  // Station position, its current stop, and the relocation in progress (if any).
+  function stationAt(T) {
+    var st = { lat: S[0].lat, lon: S[0].lon, stop: 0, move: null };
+    for (var i = 0; i < D.moves.length; i++) {
+      var m = D.moves[i];
+      if (T < m.t0) break;
+      var a = S[m.from], b = S[m.to];
+      if (T < m.t1 && !reduceMotion) {
+        var f = ease((T - m.t0) / Math.max(1e-6, m.t1 - m.t0));
+        st = { lat: lerp(a.lat, b.lat, f), lon: lerp(a.lon, b.lon, f), stop: m.from, move: m };
+      } else {
+        st = { lat: b.lat, lon: b.lon, stop: m.to, move: T < m.t1 ? m : null };
+      }
+    }
+    return st;
+  }
+  function segmentAt(T) {
+    for (var i = 0; i < D.segments.length; i++) {
+      var g = D.segments[i];
+      if (T >= g.t0 && T < g.t1) return g;
+    }
+    return null;
+  }
+  function dayAt(T) {
+    var d = 0;
+    for (var i = 0; i < D.days.length; i++) if (D.days[i].t - 0.9 <= T) d = i;
+    return d;
+  }
+  function hoursMin(minutes) {
+    if (minutes >= 2880) return Math.round(minutes / 1440) + ' days';
+    var h = Math.floor(minutes / 60), m = minutes % 60;
+    return h ? h + ' h ' + (m ? m + ' min' : '') : m + ' min';
+  }
+
+  // ------------------------------------------------------------------ render
+  var T = 0, playing = false, speed = 1, last = 0, started = false;
+  var lastStop = -1, lastDay = -1, center = null;
+
+  function render(seek) {
+    var n = countAt(T);
+    if (seek || n < shown) {
+      clearFlashes();
+      for (var i = n; i < shown; i++) removeContact(i);
+      for (var j = Math.min(n, shown); j < n; j++) if (!layers[j]) addContact(j, false);
+      for (var k = 0; k < n; k++) if (layers[k] && !layers[k].done) finish(k);
+    } else {
+      for (var a = shown; a < n; a++) addContact(a, true);
+    }
+    shown = n;
+
+    // Lines still drawing in.
+    for (var g = Math.max(0, n - 16); g < n; g++) {
+      var l = layers[g];
+      if (!l || l.done) continue;
+      var f = reduceMotion ? 1 : Math.min(1, (T - E[g].t) / GROW);
+      var e = E[g], s = S[e.stop];
+      if (f >= 1) finish(g);
+      else l.line.setLatLngs([[s.lat, s.lon], [lerp(s.lat, e.lat, ease(f)), lerp(s.lon, e.lon, ease(f))]]);
+    }
+
+    // Station, camera and trail.
+    var st = stationAt(T);
+    var lit = st.move ? -1 : st.stop;
+    if (lit !== litStop) { litStop = lit; restyleAll(); }
+    station.setLatLng([st.lat, st.lon]);
+    if (!center || Math.abs(center[0] - st.lat) > 1e-7 || Math.abs(center[1] - st.lon) > 1e-7) {
+      center = [st.lat, st.lon];
+      map.setView(center, map.getZoom(), { animate: false });
+    }
+    var path = [];
+    var reached = st.move ? st.move.from : st.stop;
+    for (var p = 0; p <= reached; p++) path.push([S[p].lat, S[p].lon]);
+    if (st.move) path.push([st.lat, st.lon]);
+    trail.setLatLngs(path);
+    stopRings.forEach(function (r, idx) {
+      var want = idx < reached || (st.move && idx === st.move.from);
+      if (want && !map.hasLayer(r)) r.addTo(map);
+      if (!want && map.hasLayer(r)) map.removeLayer(r);
+    });
+
+    // HUD.
+    var day = dayAt(T), dd = D.days[day];
+    text('day', 'Day ' + (day + 1) + ' of ' + D.days.length + ' · ' + dd.label +
+      (D.totals.weekends > 1 ? ' · Weekend ' + dd.weekend : ''));
+    var nowMin = Math.round(clockAt(T));
+    text('clock', utcLabel(nowMin));
+    text('clock-date', 'UTC · ' + utcDate(nowMin));
+    text('n-qsos', String(n));
+    text('n-calls', String(calls[n]));
+    text('n-stop', (st.stop + 1) + '/' + S.length);
+    var whereEl = $('where');
+    var whereText = st.move ? 'Relocating ' + S[st.move.from].grid + ' → ' + S[st.move.to].grid
+                            : 'Operating from ' + S[st.stop].grid;
+    if (whereEl.dataset.v !== whereText) {
+      whereEl.dataset.v = whereText;
+      whereEl.textContent = '';
+      var parts = whereText.split(/([A-R]{2}\d{2}[A-X]{0,2})/i);
+      parts.forEach(function (part, idx) {
+        if (idx % 2) { var bb = document.createElement('b'); bb.textContent = part; whereEl.appendChild(bb); }
+        else whereEl.appendChild(document.createTextNode(part));
+      });
+    }
+    if (!st.move && station.getTooltip().getContent() !== S[st.stop].grid) station.setTooltipContent(S[st.stop].grid);
+    B.forEach(function (b, k) { text('count-' + k, String(bandCounts[k][n])); });
+
+    // Fast-forward banner and day cards.
+    var seg = segmentAt(T), bannerText = '';
+    if (seg && started) {
+      if (seg.kind === 'idle') bannerText = '⏩ Fast-forwarding ' + hoursMin(seg.minutes) + ' at ' + S[seg.from].grid;
+      else bannerText = '⏩ ' + hoursMin(seg.minutes) + ' later · ' + S[seg.from].grid + ' → ' +
+        S[seg.to].grid + ' (' + seg.km + ' km)';
+    }
+    var banner = $('banner');
+    banner.hidden = !bannerText;
+    text('banner', bannerText);
+    var card = $('card'), showCard = false;
+    if (started) {
+      for (var c = 0; c < D.days.length; c++) {
+        var dt = D.days[c].t;
+        if (T >= dt - 1.0 && T < dt + 1.3) {
+          showCard = true;
+          var newWeekend = c === 0 || D.days[c].weekend !== D.days[c - 1].weekend;
+          text('card-k', newWeekend && D.totals.weekends > 1 ? 'Weekend ' + D.days[c].weekend + ' · Day ' + (c + 1)
+                                                            : 'Day ' + (c + 1));
+          text('card-v', D.days[c].label);
+        }
+      }
+    }
+    card.hidden = !showCard;
+    if (st.stop !== lastStop || day !== lastDay) {
+      if (started) $('live').textContent = dd.label + ', operating from ' + S[st.stop].grid + '.';
+      lastStop = st.stop; lastDay = day;
+    }
+
+    $('scrub').value = String(Math.round(T / DUR * 1000));
+    text('remain', mmss((DUR - T) / speed));
+  }
+
+  function finish(i) {
+    var l = layers[i], e = E[i];
+    l.line.setLatLngs([[S[e.stop].lat, S[e.stop].lon], [e.lat, e.lon]]);
+    l.mark.setOpacity(markOpacity(e));
+    l.done = true;
+  }
+
+  // ------------------------------------------------------------------ playback
+  function tick(now) {
+    if (playing) {
+      T = Math.min(DUR, T + Math.min(0.1, (now - last) / 1000) * speed);
+      last = now;
+      render(false);
+      if (T >= DUR) setPlaying(false);
+    }
+    requestAnimationFrame(tick);
+  }
+  function setPlaying(on) {
+    if (on && T >= DUR) { T = 0; render(true); }
+    playing = on;
+    last = performance.now();
+    var btn = $('play');
+    btn.innerHTML = on ? '&#10074;&#10074;' : '&#9654;';
+    btn.setAttribute('aria-label', on ? 'Pause' : 'Play');
+  }
+  function begin() {
+    if (!started) { started = true; $('start').hidden = true; }
+    setPlaying(true);
+  }
+
+  $('start-btn').addEventListener('click', begin);
+  $('play').addEventListener('click', function () { if (!started) begin(); else setPlaying(!playing); });
+  $('restart').addEventListener('click', function () { T = 0; render(true); if (!started) begin(); else setPlaying(true); });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-speed]'), function (btn) {
+    btn.addEventListener('click', function () {
+      speed = parseFloat(btn.dataset.speed);
+      document.querySelectorAll('[data-speed]').forEach(function (b) { b.setAttribute('aria-pressed', String(b === btn)); });
+      render(false);
+    });
+  });
+  function setZoomKey(key) {
+    zoomKey = key;
+    document.querySelectorAll('[data-zoom]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.zoom === key)); });
+    map.setZoom(D.zooms[key], { animate: !playing && !reduceMotion });
+  }
+  document.querySelectorAll('[data-zoom]').forEach(function (b) {
+    b.addEventListener('click', function () { setZoomKey(b.dataset.zoom); });
+  });
+  var scrub = $('scrub');
+  scrub.addEventListener('input', function () {
+    if (!started) { started = true; $('start').hidden = true; }
+    T = parseInt(scrub.value, 10) / 1000 * DUR;
+    render(true);
+  });
+  document.addEventListener('keydown', function (ev) {
+    var tag = (ev.target && ev.target.tagName) || '';
+    if (ev.key === ' ' && tag !== 'BUTTON' && tag !== 'INPUT') {
+      ev.preventDefault();
+      if (!started) begin(); else setPlaying(!playing);
+    }
+  });
+
+  // Legend: band toggles with live counts.
+  var rows = $('legend-rows');
+  B.forEach(function (b, k) {
+    var btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'leg'; btn.setAttribute('aria-pressed', 'true');
+    btn.innerHTML = swatchSvg(b) + '<span class="name"></span><span class="count" id="count-' + k + '">0</span>';
+    btn.querySelector('.name').textContent = b.band;
+    btn.title = b.band + ': ' + b.n + ' QSO' + (b.n === 1 ? '' : 's') + ' in the log';
+    btn.addEventListener('click', function () {
+      visible[k] = !visible[k];
+      btn.setAttribute('aria-pressed', String(visible[k]));
+      restyleAll();
+    });
+    rows.appendChild(btn);
+  });
+
+  // Timeline ticks at the start of each day.
+  var ticks = $('ticks');
+  D.days.forEach(function (d, i) {
+    var t = document.createElement('span');
+    t.style.left = (d.t / DUR * 100) + '%';
+    t.textContent = (i === 0 || d.weekend !== D.days[i - 1].weekend) ? d.label : d.label.split(' ')[0];
+    ticks.appendChild(t);
+  });
+
+  // Table view.
+  var table = $('table');
+  var head = document.createElement('tr');
+  ['#', 'Grid', 'Operating day', 'UTC', 'QSOs'].concat(B.map(function (b) { return b.band; })).forEach(function (h) {
+    var th = document.createElement('th'); th.textContent = h; head.appendChild(th);
+  });
+  table.appendChild(head);
+  S.forEach(function (s, i) {
+    var tr = document.createElement('tr');
+    [String(i + 1), s.grid, D.days[s.day0].label, utcSpan(s.utc0, s.utc1), String(s.n)]
+      .concat(s.counts.map(function (c) { return c ? String(c) : '–'; }))
+      .forEach(function (v) { var td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
+    table.appendChild(tr);
+  });
+  function toggleTable(open) {
+    $('table-panel').hidden = !open;
+    $('table-btn').setAttribute('aria-expanded', String(open));
+  }
+  $('table-btn').addEventListener('click', function () { toggleTable($('table-panel').hidden); });
+  $('table-close').addEventListener('click', function () { toggleTable(false); });
+
+  // Titles.
+  text('who', D.title);
+  text('start-title', D.title);
+  text('start-sub', D.totals.qsos + ' QSOs · ' + D.totals.calls + ' stations · ' + D.totals.stops +
+    ' operating location' + (D.totals.stops === 1 ? '' : 's') + ' · ' + D.totals.days + ' day' +
+    (D.totals.days === 1 ? '' : 's'));
+  setZoomKey('area');
+  window.addEventListener('resize', function () { map.invalidateSize(false); center = null; render(false); });
+
+  // For automated checks and embedding: jump to a moment and report state.
+  window.contestMovie = {
+    seek: function (t) { if (!started) { started = true; $('start').hidden = true; } T = Math.max(0, Math.min(DUR, t)); render(true); },
+    play: begin, pause: function () { setPlaying(false); },
+    state: function () { return { t: T, duration: DUR, shown: shown, stop: stationAt(T).stop, zoom: map.getZoom(), playing: playing }; }
+  };
+  render(true);
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
+"""
+
+
+# Contest names as Cabrillo writes them -> how the --animate title shows them.
+_CONTEST_TITLES = {
+    'ARRL-10-GHZ': 'ARRL 10 GHz and Up',
+}
+
+
+def _read_cabrillo_header(filename, key):
+    """Value of one Cabrillo header line (e.g. CONTEST), or None."""
+    try:
+        with open(filename, 'r') as f:
+            for line in f:
+                if line.upper().startswith(key.upper() + ':'):
+                    return line.split(':', 1)[1].strip() or None
+                if line.startswith('QSO:'):
+                    break
+    except OSError:
+        pass
+    return None
+
+
+def _round_coords(obj, places=4):
+    """GeoJSON geometry with coordinates rounded (about 10 m), to keep the page small."""
+    if isinstance(obj, dict):
+        return {k: _round_coords(v, places) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_round_coords(v, places) for v in obj]
+    if isinstance(obj, float):
+        return round(obj, places)
+    return obj
+
+
+def _animation_background(lat_min, lat_max, lon_min, lon_max, tolerance):
+    """Natural Earth 10m land, lakes, coastline, country and state/province
+    borders for the --animate map. The movie zooms in further than the static
+    maps, so it needs the detailed scale; it falls back to the coarse layers
+    the --html maps use if the detailed data can't be read."""
+    layers = {
+        'land': ('physical', 'land'),
+        'lakes': ('physical', 'lakes'),
+        'coastline': ('physical', 'coastline'),
+        'borders': ('cultural', 'admin_0_boundary_lines_land'),
+        'states': ('cultural', 'admin_1_states_provinces_lines'),
+    }
+    out = {}
+    for key, (category, name) in layers.items():
+        feature = cfeature.NaturalEarthFeature(category, name, '10m')
+        out[key] = _round_coords(_geojson_geoms_for_bbox(feature, lon_min, lon_max, lat_min, lat_max,
+                                                         tolerance=tolerance))
+    if not out['land'] and not out['coastline']:
+        coarse = _background_geojson(lon_min, lon_max, lat_min, lat_max)
+        for key in ('land', 'lakes', 'coastline', 'borders'):
+            out[key] = _round_coords(coarse.get(key, []))
+    return out
+
+
+def create_animation_html(qso_records_by_band, callsign, fallback_home_grid=None, output_file=None,
+                          contest=None, target_seconds=None, osm_basemap=False, osm_opacity=0.3):
+    """Write the --animate page: the whole log replayed as a movie, following
+    the station between operating locations with each contact drawn in as it
+    was made, colored by band. Returns the file name, or None if the log has
+    nothing to animate (no contacts with a time and both grids)."""
+    data = build_animation_data(qso_records_by_band, fallback_home_grid, target_seconds)
+    if data is None:
+        print("Skipping --animate: no contacts with a date, time, worked grid and operating grid")
+        return None
+
+    # Background: everything the camera can show, with room for the widest
+    # zoom level around the outermost stations.
+    (lat_min, lon_min), (lat_max, lon_max) = data['bounds']
+    mid_lat = (lat_min + lat_max) / 2
+    meters_per_px = 156543.03 * math.cos(math.radians(mid_lat)) / (2 ** data['zooms']['region'])
+    pad_km = 700 * meters_per_px / 1000.0
+    pad_lat = min(10.0, pad_km / 111.0)
+    pad_lon = min(14.0, pad_km / (111.0 * max(0.2, math.cos(math.radians(mid_lat)))))
+    data['background'] = _animation_background(lat_min - pad_lat, lat_max + pad_lat,
+                                               lon_min - pad_lon, lon_max + pad_lon, tolerance=0.006)
+    data['osm'] = {'opacity': osm_opacity} if osm_basemap else None
+
+    year = datetime(1970, 1, 1) + timedelta(minutes=data['events'][0]['utc'])
+    contest_title = _CONTEST_TITLES.get((contest or '').upper(), (contest or '').replace('-', ' ').strip())
+    data['title'] = f"{callsign} · {contest_title} {year.year}" if contest_title else f"{callsign} · {year.year}"
+
+    if output_file is None:
+        output_file = f"{callsign}_contest_animation.html"
+    # Escape <, > and & so nothing in the log (a callsign, say) can end the script block.
+    data_json = (json.dumps(data, separators=(',', ':'))
+                 .replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026'))
+    page = _ANIMATION_PAGE_TEMPLATE.replace('__TITLE__', _esc(f"{callsign} contest movie"))
+    page = page.replace('__DATA_JSON__', data_json)
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write(page)
+    totals = data['totals']
+    print(f"Animation saved as {output_file} ({totals['qsos']} contacts, {totals['stops']} operating "
+          f"location{'s' if totals['stops'] != 1 else ''}, {data['duration']:.0f} s at 1x)")
+    if totals['skipped']:
+        print(f"  {totals['skipped']} contact(s) left out: missing a date/time or a grid square")
+    return output_file
+
+
 def main():
     """Main entry point for console script"""
     import sys
@@ -1429,6 +2445,19 @@ def main():
                             'hoverable (desktop) or tappable (mobile) with a popup showing that '
                             'contact\'s callsign, date, six-character grid, and other QSO details. '
                             'Looks the same as the PNG output, with or without --osm-basemap.')
+
+    parser.add_argument('--animate', action='store_true',
+                       help='Also generate an animated HTML "movie" of the whole log: the map follows '
+                            'you from one operating location to the next while a line to each worked '
+                            'station is drawn in as the contact was made, colored by band, with '
+                            '0.5x/1x/2x playback, three fixed zoom levels, a timeline and a summary '
+                            'table. All operating days (e.g. both weekends of the ARRL 10 GHz and Up '
+                            'contest) play back to back; long breaks and drives are fast-forwarded.')
+    parser.add_argument('--animate-only', action='store_true',
+                       help='Generate only the --animate movie, without the per-band maps.')
+    parser.add_argument('--animate-seconds', type=float, metavar='SECONDS',
+                       help='Length of the --animate movie at 1x speed (default: about 2 minutes '
+                            'for a busy multi-location log, less for a small one).')
 
     if len(sys.argv) == 1:
         parser.print_help()
@@ -1485,6 +2514,18 @@ def main():
     if override_home_grid and len(all_locations) > 1:
         print(f"Note: {len(all_locations)} operating locations detected in this log, but --home-grid "
               f"overrides per-location detection; treating all contacts as worked from {override_home_grid}.")
+
+    if args.animate or args.animate_only:
+        animate_records = qso_records_by_band
+        if override_home_grid:
+            animate_records = {band: [dict(r, home_grid=override_home_grid) for r in records]
+                               for band, records in qso_records_by_band.items()}
+        contest = None if filename.lower().endswith('.csv') else _read_cabrillo_header(filename, 'CONTEST')
+        create_animation_html(animate_records, callsign, override_home_grid or detected_home_grid,
+                              contest=contest, target_seconds=args.animate_seconds,
+                              osm_basemap=args.osm_basemap, osm_opacity=args.osm_opacity)
+        if args.animate_only:
+            return
 
     for band, grids in grids_by_band.items():
         contacts = contacts_by_band.get(band)

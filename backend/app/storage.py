@@ -28,6 +28,14 @@ def safe_download_name(name):
     return re.sub(r"[^A-Za-z0-9._-]", "_", name) or "download"
 
 
+def content_disposition(name):
+    """Download most files, but show the contest movie in the browser tab:
+    it's a page meant to be watched, and on a phone a downloaded .html file
+    opens in a preview that doesn't run it. name must already be safe."""
+    kind = "inline" if name.endswith("_contest_animation.html") else "attachment"
+    return f'{kind}; filename="{name}"'
+
+
 def content_type(name):
     ext = os.path.splitext(name)[1].lower()
     return CONTENT_TYPES.get(ext) or mimetypes.guess_type(name)[0] or "application/octet-stream"
@@ -54,7 +62,7 @@ class S3Storage:
                 Key=key,
                 Body=f,
                 ContentType=content_type(name),
-                ContentDisposition=f'attachment; filename="{name}"',
+                ContentDisposition=content_disposition(name),
             )
         return self.s3.generate_presigned_url(
             "get_object", Params={"Bucket": self.bucket, "Key": key}, ExpiresIn=self.ttl

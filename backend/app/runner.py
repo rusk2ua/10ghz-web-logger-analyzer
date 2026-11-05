@@ -67,7 +67,11 @@ MAP_OUTPUTS = {
     "grid_density": r"_maidenhead_map\.(png|html)$",
     "grid_paths": r"_grid_paths_map\.(png|html)$",
 }
-ALL_OUTPUTS = list(SINGLE_LOG_OUTPUTS) + list(MAP_OUTPUTS) + list(MULTI_LOG_OUTPUTS)
+# grid-mapper's --animate movie gets a run of its own (--animate-only), so it
+# doesn't also draw every per-band map.
+MOVIE_OUTPUT = "grid_movie"
+MOVIE_PATTERN = r"_contest_animation\.html$"
+ALL_OUTPUTS = list(SINGLE_LOG_OUTPUTS) + list(MAP_OUTPUTS) + [MOVIE_OUTPUT] + list(MULTI_LOG_OUTPUTS)
 
 OUTPUT_LABELS = {
     "cabrillo": "Cabrillo log",
@@ -80,6 +84,7 @@ OUTPUT_LABELS = {
     "comparison": "Log comparison",
     "grid_density": "Grid maps (contacts per grid square)",
     "grid_paths": "Path maps (lines to each station worked)",
+    "grid_movie": "Contest movie (the whole contest as an animated map)",
 }
 
 GRID4_RE = re.compile(r"^[A-R]{2}[0-9]{2}$")
@@ -228,7 +233,8 @@ def run_outputs(sources, outputs, workdir, band_category="AUTO", map_options=Non
     """Run every requested output against the sources. Returns [RunResult].
 
     map_options: {"html": bool, "osm": bool} -- grid-mapper's --html and
-    --osm-basemap switches, applied to whichever map outputs are requested.
+    --osm-basemap switches, applied to whichever map outputs are requested
+    (--osm-basemap also applies to the contest movie).
     """
     results = []
     single = [o for o in outputs if o in SINGLE_LOG_OUTPUTS]
@@ -259,6 +265,8 @@ def run_outputs(sources, outputs, workdir, band_category="AUTO", map_options=Non
 
         if maps:
             results += _run_maps(src, index, maps, map_options, workdir, run_once)
+        if MOVIE_OUTPUT in outputs:
+            results.append(_run_movie(src, index, map_options, workdir, run_once))
 
     if "comparison" in outputs:
         if len(sources) < 2:
@@ -274,19 +282,26 @@ def run_outputs(sources, outputs, workdir, band_category="AUTO", map_options=Non
     return results
 
 
+def _cabrillo_for_maps(src, run_once):
+    """grid-mapper reads Cabrillo (with the operator's grid on every QSO
+    line), so a CSV log is first converted by the upstream Cabrillo converter
+    -- the same file the "cabrillo" output produces. Returns (path or None,
+    notes, error)."""
+    if src.path.lower().endswith(".log"):
+        return src.path, "", ""
+    files, notes, error = run_once("arrl_10ghz_cabrillo", [])
+    cabrillo = next((f for f in files if f.endswith("_ARRL_10GHZ.log")), None)
+    if cabrillo is None:
+        error = error or "Couldn't convert this log to Cabrillo for mapping -- see the processing notes."
+    return cabrillo, notes, error
+
+
 def _run_maps(src, index, maps, map_options, workdir, run_once):
     """Run grid-mapper once for this log and split its files into the
-    requested map outputs. grid-mapper reads Cabrillo (with the operator's
-    grid on every QSO line), so a CSV log is first converted by the upstream
-    Cabrillo converter -- the same file the "cabrillo" output produces."""
-    cabrillo = src.path if src.path.lower().endswith(".log") else None
-    notes = ""
+    requested map outputs."""
+    cabrillo, notes, error = _cabrillo_for_maps(src, run_once)
     if cabrillo is None:
-        files, notes, error = run_once("arrl_10ghz_cabrillo", [])
-        cabrillo = next((f for f in files if f.endswith("_ARRL_10GHZ.log")), None)
-        if cabrillo is None:
-            msg = error or "Couldn't convert this log to Cabrillo for mapping -- see the processing notes."
-            return [RunResult(output, src.label, [], notes, msg) for output in maps]
+        return [RunResult(output, src.label, [], notes, error) for output in maps]
 
     argv = [cabrillo]
     if "grid_paths" in maps:
@@ -306,3 +321,19 @@ def _run_maps(src, index, maps, map_options, workdir, run_once):
             out_error = "No map was produced -- see the processing notes."
         results.append(RunResult(output, src.label, kept, notes, out_error))
     return results
+
+
+def _run_movie(src, index, map_options, workdir, run_once):
+    """grid-mapper --animate-only: the whole log as one animated HTML page."""
+    cabrillo, notes, error = _cabrillo_for_maps(src, run_once)
+    if cabrillo is None:
+        return RunResult(MOVIE_OUTPUT, src.label, [], notes, error)
+    argv = [cabrillo, "--animate-only"]
+    if map_options.get("osm"):
+        argv.append("--osm-basemap")
+    files, notes, error = run_script("maidenhead_map", argv,
+                                     os.path.join(workdir, f"src{index}", "maidenhead_map_movie"))
+    kept = [f for f in files if re.search(MOVIE_PATTERN, os.path.basename(f))]
+    if not kept and not error:
+        error = "No movie was produced -- the log needs a time and both grid squares on each QSO."
+    return RunResult(MOVIE_OUTPUT, src.label, kept, notes, error)
