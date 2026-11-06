@@ -1485,7 +1485,7 @@ def _arrl10_points(home, grid, band):
     lat2, lon2 = map(math.radians, _arrl10_latlon(grid))
     a = (math.sin((lat2 - lat1) / 2) ** 2
          + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2)
-    km = 6371 * 2 * math.asin(math.sqrt(a))
+    km = 6371 * 2 * math.asin(min(1.0, math.sqrt(a)))
     return max(1, math.ceil(km)) * _arrl10_multiplier(band)
 
 
