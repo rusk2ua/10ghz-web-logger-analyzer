@@ -22,7 +22,7 @@ reports and maps are identical to the command-line versions. Currently vendored:
 `backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.4.1**. See the [version history](#version-history).
+**v2.4.2**. See the [version history](#version-history).
 
 ## Architecture
 
@@ -337,6 +337,12 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
   result.
 
 ## Version history
+
+### v2.4.2 (2026-11-06): footer tagline
+
+- A tagline at the bottom of the page: the site and its code are provided as a service to the
+  Amateur Radio microwave community by Rus Healy, K2UA, with an invitation to share it and a
+  reminder that mentoring new hams is the future of the hobby.
 
 ### v2.4.1 (2026-11-05): saved movies play offline
 

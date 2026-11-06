@@ -221,6 +221,7 @@ pre { background: var(--code-bg); padding: 0.8rem 1rem; border-radius: 6px; over
 
 /* ---------------------------------------------------------------- footer */
 .footer { text-align: center; color: var(--muted); font-size: 0.85rem; padding: 1rem 1rem 2rem; }
+.footer-tagline { max-width: 46rem; margin: 0.8rem auto 0; color: var(--text); font-style: italic; line-height: 1.5; }
 
 @media (max-width: 600px) {
   .header h1 { font-size: 1.3rem; }
