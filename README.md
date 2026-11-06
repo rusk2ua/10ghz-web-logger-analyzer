@@ -18,11 +18,11 @@ and [grid-mapper](https://github.com/rusk2ua/grid-mapper). Anyone can upload a c
 
 The web app runs both CLI projects' own scripts, vendored unmodified, so its scores,
 reports and maps are identical to the command-line versions. Currently vendored:
-10ghz-log-analyzer **v1.6.2** and grid-mapper **v1.6.1** (see `UPSTREAM.txt` in
+10ghz-log-analyzer **v1.6.2** and grid-mapper **v1.6.2** (see `UPSTREAM.txt` in
 `backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.4.2**. See the [version history](#version-history).
+**v2.4.3**. See the [version history](#version-history).
 
 ## Architecture
 
@@ -337,6 +337,15 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
   result.
 
 ## Version history
+
+### v2.4.3 (2026-11-06): running score in the contest movie
+
+- The contest movie's info panel shows **Cumulative Score**, climbing with every contact
+  (grid-mapper v1.6.2). It's scored exactly like the analyzer's summary, so it ends on the
+  same claimed score: distance (km, rounded up, minimum 1) × band multiplier, plus 100 per
+  unique call per band.
+- New test: the movie's final score equals the analyzer's `calculate_score` for both sample
+  logs (Cabrillo and CSV).
 
 ### v2.4.2 (2026-11-06): footer tagline
 

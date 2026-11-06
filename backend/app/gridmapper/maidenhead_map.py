@@ -1448,6 +1448,47 @@ def default_animation_seconds(n_contacts, n_moves):
     return max(40.0, min(150.0, 30.0 + 0.3 * n_contacts + 2.5 * n_moves))
 
 
+# ARRL 10 GHz and Up scoring for the movie's running score. It mirrors the
+# 10ghz-log-analyzer (arrl_10ghz_cabrillo.calculate_score) exactly, so the
+# movie ends on the same number as that tool's summary: per QSO, distance in
+# km rounded up (minimum 1) times the band multiplier (rules 5.2: 10 GHz x1,
+# 24 x2, 47 x3, 75 x4, 122 GHz and up x5), plus 100 the first time each call
+# is worked on each band. Distances use the analyzer's own grid convention
+# (sub-square centers; a 4-character grid is read as its "AA" sub-square)
+# and a 6371 km Earth radius, which differ slightly from the map's.
+_SCORED_CONTESTS = {'ARRL-10-GHZ': 'ARRL 10 GHz and Up'}
+
+
+def _arrl10_multiplier(band):
+    freq = band_min_freq_mhz(band) or 0
+    for floor, multiplier in ((119980, 5), (75000, 4), (47000, 3), (24000, 2)):
+        if freq >= floor:
+            return multiplier
+    return 1
+
+
+def _arrl10_latlon(grid):
+    grid = str(grid).upper().strip()
+    if len(grid) < 4:
+        return 0.0, 0.0
+    grid = (grid + 'AA')[:6]
+    try:
+        lon = (ord(grid[0]) - ord('A')) * 20 - 180 + (ord(grid[2]) - ord('0')) * 2 + (ord(grid[4]) - ord('A')) * 5 / 60
+        lat = (ord(grid[1]) - ord('A')) * 10 - 90 + (ord(grid[3]) - ord('0')) + (ord(grid[5]) - ord('A')) * 2.5 / 60
+        return lat + 1.25 / 60, lon + 2.5 / 60
+    except (ValueError, IndexError):
+        return 0.0, 0.0
+
+
+def _arrl10_points(home, grid, band):
+    lat1, lon1 = map(math.radians, _arrl10_latlon(home))
+    lat2, lon2 = map(math.radians, _arrl10_latlon(grid))
+    a = (math.sin((lat2 - lat1) / 2) ** 2
+         + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2)
+    km = 6371 * 2 * math.asin(math.sqrt(a))
+    return max(1, math.ceil(km)) * _arrl10_multiplier(band)
+
+
 def _parse_qso_datetime(date_text, time_text):
     """UTC datetime from a QSO's date (YYYY-MM-DD) and time (HHMM, HH:MM,
     HH:MM:SS or a bare number such as 937 or 937.0). Returns None if either
@@ -1494,7 +1535,7 @@ def _animation_total_seconds(gaps, spans, k):
 
 
 def build_animation_data(qso_records_by_band, fallback_home_grid=None, target_seconds=None,
-                         gap_minutes=45.0):
+                         gap_minutes=45.0, contest=None):
     """Turn a log into the timeline the --animate page plays.
 
     qso_records_by_band is what parse_cabrillo_grids/parse_csv_grids return.
@@ -1505,6 +1546,10 @@ def build_animation_data(qso_records_by_band, fallback_home_grid=None, target_se
     solar date (UTC shifted by longitude/15 hours), so an evening session that
     crosses 0000Z stays on its own day; consecutive days form a weekend, and
     all weekends play back to back as one period.
+
+    For a contest whose scoring rules are known (contest = the Cabrillo
+    CONTEST value, e.g. ARRL-10-GHZ), each event also carries the running
+    score after it ('sc'), and data['scoring'] names the rules.
 
     Returns None if the log has no contact with a time, a worked grid and an
     operating grid. Otherwise a JSON-ready dict (see create_animation_html).
@@ -1641,6 +1686,15 @@ def build_animation_data(qso_records_by_band, fallback_home_grid=None, target_se
         'call': e['call'], 'grid': e['grid'], 'band': band_index[e['band']], 'stop': e['stop'],
         'km': round(e['km']), 'utc': epoch(e['when']), 'day': e['day'],
     } for i, e in enumerate(flat)]
+    scoring = _SCORED_CONTESTS.get((contest or '').upper())
+    if scoring:
+        score, worked = 0, set()
+        for event, e in zip(events, flat):
+            score += _arrl10_points(e['home'], e['grid'], e['band'])
+            if (e['call'].upper(), e['band']) not in worked:
+                worked.add((e['call'].upper(), e['band']))
+                score += 100
+            event['sc'] = score
     clock = [[round(times[0] - _ANIM_LEAD, 3), events[0]['utc']]] + [[ev['t'], ev['utc']] for ev in events]
 
     # Camera: three fixed zoom levels. "Area" is the one where a typical long
@@ -1656,6 +1710,7 @@ def build_animation_data(qso_records_by_band, fallback_home_grid=None, target_se
     return {
         'events': events, 'stops': stops, 'bands': bands, 'days': days, 'moves': moves,
         'segments': segments, 'clock': clock, 'duration': round(duration, 3), 'zooms': zooms,
+        'scoring': {'rules': scoring, 'total': events[-1]['sc']} if scoring else None,
         'bounds': [[min(p[0] for p in points), min(p[1] for p in points)],
                    [max(p[0] for p in points), max(p[1] for p in points)]],
         'totals': {'qsos': len(events), 'calls': len({e['call'] for e in events}),
@@ -1709,6 +1764,8 @@ __LEAFLET_CSS__
   #hud .stats { display: flex; gap: 18px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--panel-edge); }
   #hud .stat .n { font: 600 20px/1.1 ui-monospace, Menlo, Consolas, monospace; }
   #hud .stat .l { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; }
+  #hud .score { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--panel-edge); font-size: 13px; color: var(--ink-2); }
+  #hud .score b { font: 600 18px/1 ui-monospace, Menlo, Consolas, monospace; color: var(--ink-1); margin-left: 4px; }
 
   #legend { top: 14px; right: 14px; padding: 10px 10px 8px; width: 200px; }
   #legend h2, #table-panel h2 { margin: 0 4px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em;
@@ -1781,6 +1838,8 @@ __LEAFLET_CSS__
     #hud .where { margin-top: 4px; font-size: 12px; }
     #hud .stats { gap: 16px; margin-top: 6px; padding-top: 6px; }
     #hud .stat .n { font-size: 16px; }
+    #hud .score { margin-top: 6px; padding-top: 6px; font-size: 12px; }
+    #hud .score b { font-size: 15px; }
     #legend { top: auto; right: 10px; left: 10px; bottom: 112px; width: auto; padding: 5px;
       display: flex; flex-wrap: wrap; gap: 2px; }
     #legend h2, #legend .hint { display: none; }
@@ -1812,6 +1871,7 @@ __LEAFLET_CSS__
     <div class="stat"><div class="n" id="n-calls">0</div><div class="l">Stations</div></div>
     <div class="stat"><div class="n" id="n-stop">0</div><div class="l">Location</div></div>
   </div>
+  <div class="score" id="score-line" hidden>Cumulative Score: <b id="score">0</b></div>
 </div>
 
 <div id="legend" class="panel" aria-label="Bands">
@@ -2143,6 +2203,7 @@ const DATA = __DATA_JSON__;
     text('n-qsos', String(n));
     text('n-calls', String(calls[n]));
     text('n-stop', (st.stop + 1) + '/' + S.length);
+    if (D.scoring) text('score', (n ? E[n - 1].sc : 0).toLocaleString('en-US'));
     var whereEl = $('where');
     var whereText = st.move ? 'Relocating ' + S[st.move.from].grid + ' → ' + S[st.move.to].grid
                             : 'Operating from ' + S[st.stop].grid;
@@ -2301,6 +2362,7 @@ const DATA = __DATA_JSON__;
 
   // Titles.
   text('who', D.title);
+  $('score-line').hidden = !D.scoring;
   text('start-title', D.title);
   text('start-sub', D.totals.qsos + ' QSOs · ' + D.totals.calls + ' stations · ' + D.totals.stops +
     ' operating location' + (D.totals.stops === 1 ? '' : 's') + ' · ' + D.totals.days + ' day' +
@@ -2402,7 +2464,7 @@ def create_animation_html(qso_records_by_band, callsign, fallback_home_grid=None
     the station between operating locations with each contact drawn in as it
     was made, colored by band. Returns the file name, or None if the log has
     nothing to animate (no contacts with a time and both grids)."""
-    data = build_animation_data(qso_records_by_band, fallback_home_grid, target_seconds)
+    data = build_animation_data(qso_records_by_band, fallback_home_grid, target_seconds, contest=contest)
     if data is None:
         print("Skipping --animate: no contacts with a date, time, worked grid and operating grid")
         return None

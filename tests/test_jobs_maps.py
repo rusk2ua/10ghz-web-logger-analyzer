@@ -224,3 +224,23 @@ def test_movie_usage_counts_as_a_map_analysis(call_api, output_dir, no_backgroun
     assert stats["outputs"].get("grid_movie") == 1
     assert stats["mapAnalyses"] == 1 and stats["mapOptions"]["OpenStreetMap underlay"] == 1
 
+
+@pytest.mark.parametrize("log", [CABRILLO, CSV])
+def test_movie_score_matches_the_analyzer(call_api, output_dir, no_background, log):
+    """The movie's running score must end on the analyzer's claimed score."""
+    import contextlib
+    import io
+    import runner
+    status, body = call_api({"files": [log], "callsign": "K2UA", "outputs": ["grid_movie"]})
+    assert status == 200, body
+    [movie] = body["files"]
+    data = _movie_data(local_file(output_dir, movie))
+
+    path = output_dir / ("check_" + log["name"])
+    path.write_text(log["content"], encoding="utf-8")
+    cabrillo, data_source = runner._module("arrl_10ghz_cabrillo"), runner._module("data_source")
+    with contextlib.redirect_stdout(io.StringIO()):
+        loaded = data_source.load_source_or_exit(str(path), verbose=False)
+        claimed = cabrillo.calculate_score(loaded[0] if isinstance(loaded, tuple) else loaded)
+    assert data["scoring"]["total"] == data["events"][-1]["sc"] == claimed
+
