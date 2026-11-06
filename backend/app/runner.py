@@ -287,7 +287,8 @@ def _fix_unknown_callsign(path, callsign):
     their files UNKNOWN_...; rename to the call sign from the web form."""
     name = os.path.basename(path)
     if callsign and callsign != "UNKNOWN" and name.startswith("UNKNOWN_"):
-        new_path = os.path.join(os.path.dirname(path), callsign + name[len("UNKNOWN"):])
+        new_path = os.path.join(os.path.dirname(path),
+                                data_source.file_safe_call(callsign) + name[len("UNKNOWN"):])
         os.replace(path, new_path)
         return new_path
     return path

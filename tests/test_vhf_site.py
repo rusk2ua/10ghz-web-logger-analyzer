@@ -119,3 +119,11 @@ def test_adif_without_my_grid_is_explained(call_api):
                                         "<BAND:2>2m <GRIDSQUARE:4>FN13 <EOR>\n"}
     status, body = call_api({"files": [log], "callsign": "K2UA", "outputs": ["summary"]})
     assert status == 400 and "MY_GRIDSQUARE" in body["message"]
+
+
+def test_rover_call_from_the_form_names_csv_outputs(call_api):
+    log = {"name": "rover.csv", "content": "date,band,sourcegrid,time,call,grid\n"
+                                           "2026-06-13,144,FN12,1800,W2AAA,FN13\n"}
+    status, body = call_api({"files": [log], "callsign": "K2UA/R", "outputs": ["station_report"]})
+    assert status == 200, body
+    assert body["files"][0]["name"].startswith("K2UA-R_Station_Report_")
