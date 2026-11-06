@@ -229,3 +229,7 @@ pre { background: var(--code-bg); padding: 0.8rem 1rem; border-radius: 6px; over
   .segmented { display: flex; }
   .segmented label { flex: 1; text-align: center; }
 }
+.inline-check { display: flex; gap: 0.5rem; align-items: flex-start; margin-top: 0.6rem; font-size: 0.92rem; cursor: pointer; }
+.inline-check input { margin-top: 0.25rem; }
+.log-card dd small.how { color: var(--muted); font-size: 0.85em; }
+.row-gap { margin-top: 1rem; }

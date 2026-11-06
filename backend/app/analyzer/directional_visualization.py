@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import math
 
 from data_source import (
+    file_safe_call,
     load_source_or_exit, build_arg_parser,
     normalize_band, band_multiplier,
 )
@@ -262,7 +263,7 @@ def create_location_plots(contact_data, callsign):
     count = 0
     for (grid, date), loc_data in data.groupby(['op_grid', 'op_date']):
         fig = create_polar_plot(loc_data, f"{callsign} from {grid} - {date}")
-        filename = f"{callsign}_{grid}_direction_analysis_{date}.png"
+        filename = f"{file_safe_call(callsign)}_{grid}_direction_analysis_{date}.png"
         fig.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"Saved: {filename}")
         plt.close(fig)
@@ -342,7 +343,7 @@ def main():
             fig = create_polar_plot(day_data, day_name)
             
             # Save the plot with callsign and date
-            filename = f"{callsign}_Directional_Analysis_Day_{day_num}_{date_str}.png"
+            filename = f"{file_safe_call(callsign)}_Directional_Analysis_Day_{day_num}_{date_str}.png"
             plt.savefig(filename, dpi=300, bbox_inches='tight')
             print(f"Saved: {filename}")
             plt.close()

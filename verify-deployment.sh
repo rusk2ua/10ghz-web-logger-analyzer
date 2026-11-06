@@ -45,9 +45,18 @@ def urlopen(req, timeout=30):
         raise
 
 url = sys.argv[1]
-csv = open("tests/fixtures/sample_qso_log.csv").read()
-body = json.dumps({"files": [{"name": "sample_qso_log.csv", "content": csv}], "callsign": "K2UA",
-                   "outputs": ["cabrillo", "summary", "directional_viz", "grid_paths", "grid_movie"]}).encode()
+with urlopen(urllib.request.Request(url + "/")) as resp:
+    vhf = b'data-site="vhf"' in resp.read()
+if vhf:
+    # The VHF site: the sample rover log (ADIF), scored and replayed as a movie.
+    print("OK   this is the VHF contests site")
+    adi = open("tests/fixtures/sample_vhf_rover.adi").read()
+    body = json.dumps({"files": [{"name": "sample_vhf_rover.adi", "content": adi}],
+                       "outputs": ["cabrillo", "summary", "grid_movie"]}).encode()
+else:
+    csv = open("tests/fixtures/sample_qso_log.csv").read()
+    body = json.dumps({"files": [{"name": "sample_qso_log.csv", "content": csv}], "callsign": "K2UA",
+                       "outputs": ["cabrillo", "summary", "directional_viz", "grid_paths", "grid_movie"]}).encode()
 
 def call(path, data=None):
     req = urllib.request.Request(url + path, data=data, headers={"Content-Type": "application/json"})
@@ -80,7 +89,12 @@ names = [f["name"] for f in r["files"]]
 print(f"OK   job finished in {time.time() - started:.0f} s with {len(names)} files: {', '.join(names)}")
 if r["errors"]:
     print("WARN", r["errors"])
-if not any(f["output"] == "grid_paths" for f in r["files"]):
+if vhf:
+    log = r["logs"][0]
+    if (log.get("contest"), log.get("category")) != ("ARRL June VHF Contest", "Classic Rover"):
+        sys.exit(f"FAIL the sample rover log was read as {log.get('contest')} / {log.get('category')}")
+    print(f"OK   detected {log['contest']}, {log['category']}")
+elif not any(f["output"] == "grid_paths" for f in r["files"]):
     sys.exit("FAIL no grid-mapper path maps were generated")
 with urlopen(urllib.parse.urljoin(url + "/", r["files"][0]["url"])) as resp:
     assert resp.status == 200
@@ -101,5 +115,9 @@ if disposition.lower().startswith("attachment") or not ctype.lower().startswith(
     sys.exit(f"FAIL the contest movie would download instead of playing "
              f"(Content-Type {ctype!r}, Content-Disposition {disposition!r})")
 print(f"OK   contest movie opens in the browser ({len(page) // 1024} KB)")
+if vhf:
+    if b'"total":9890' not in page:
+        sys.exit("FAIL the movie's score for the sample rover log isn't 9,890")
+    print("OK   movie scores the sample rover log at 9,890")
 print(f"OK   running analyzer {r['upstream']} and grid-mapper {r.get('gridMapper')}")
 EOF

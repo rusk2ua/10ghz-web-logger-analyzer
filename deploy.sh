@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Deploy the ARRL 10 GHz log analyzer to AWS.
+# Deploy the ARRL 10 GHz log analyzer (or its VHF twin) to AWS.
 #
 #   ./deploy.sh
+#   SITE_MODE=vhf STACK_NAME=arrl-vhf-web DOMAIN_NAME=vhf.microwavedx.com ./deploy.sh
 #
 # Optional settings (environment variables):
+#   SITE_MODE=vhf                       the VHF contests site (home page vhf.html) instead of
+#                                       the 10 GHz and Up site; give it its own STACK_NAME
 #   DOMAIN_NAME=10ghz.microwavedx.com   custom host name (needs a Route 53 hosted zone)
 #   ALT_DOMAIN_NAME=www.microwavedx.com second host name on the same certificate
 #   HOSTED_ZONE_ID=Z0123...             skip the automatic hosted-zone lookup
@@ -43,7 +46,14 @@ if [[ -z "${DOCKER_HOST:-}" && ! -S /var/run/docker.sock ]]; then
 fi
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) \
   || fail "AWS credentials not configured. Run 'aws configure' (or 'aws sso login')."
-say "Deploying stack '$STACK_NAME' to account $ACCOUNT in $REGION"
+case "${SITE_MODE:-10ghz}" in
+  10ghz|vhf) ;;
+  *) fail "SITE_MODE must be 10ghz or vhf (got '$SITE_MODE')." ;;
+esac
+if [[ "${SITE_MODE:-10ghz}" == vhf && "$STACK_NAME" == arrl-10ghz-web ]]; then
+  fail "SITE_MODE=vhf needs its own stack -- set STACK_NAME (e.g. STACK_NAME=arrl-vhf-web)."
+fi
+say "Deploying stack '$STACK_NAME' (${SITE_MODE:-10ghz} site) to account $ACCOUNT in $REGION"
 
 # ------------------------------------------------------------------ alert email
 # The alert address is part of the two budgets. Changing it makes CloudFormation
@@ -131,6 +141,7 @@ sam build
 
 say "Deploying the CloudFormation stack"
 params=(
+  "SiteMode=${SITE_MODE:-10ghz}"
   "ReservedConcurrency=$RESERVED_CONCURRENCY"
   "AppBudgetUsd=${APP_BUDGET_USD:-5}"
   "MonthlyBudgetUsd=${MONTHLY_BUDGET_USD:-10}"

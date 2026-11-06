@@ -6,6 +6,14 @@ Description: >
   /api/process on HTTP API + a container-image Lambda. Deploy with deploy.sh.
 
 Parameters:
+  SiteMode:
+    Type: String
+    Default: 10ghz
+    AllowedValues: [10ghz, vhf]
+    Description: >
+      Which site this stack serves: 10ghz (the ARRL 10 GHz and Up analyzer,
+      home page index.html) or vhf (the ARRL January/June/September VHF
+      analyzer, home page vhf.html). Same code; deploy each as its own stack.
   DomainName:
     Type: String
     Default: ''
@@ -85,6 +93,7 @@ Conditions:
     - !Condition HasAlternateDomain
   HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
   HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
+  IsVhfSite: !Equals [!Ref SiteMode, vhf]
 
 Rules:
   CustomDomainNeedsCertificate:
@@ -195,6 +204,7 @@ Resources:
       Environment:
         Variables:
           STORAGE_MODE: s3
+          SITE_MODE: !Ref SiteMode
           RESULTS_BUCKET: !Ref ResultsBucket
           WEBSITE_BUCKET: !Ref WebsiteBucket
           URL_TTL_SECONDS: '3600'
@@ -267,7 +277,9 @@ Resources:
 
   # CloudFront only applies DefaultRootObject at "/", so /stats/ would ask S3
   # for a "stats/" object (which, with a private bucket, answers Access Denied).
-  # Serve index.html for folder URLs, and add the missing slash to /stats.
+  # Serve index.html for folder URLs, and add the missing slash to /stats. The
+  # site's own home page (index.html, or vhf.html for SiteMode vhf) is served
+  # at "/".
   DirectoryIndexFunction:
     Type: AWS::CloudFront::Function
     Properties:
@@ -276,21 +288,25 @@ Resources:
       FunctionConfig:
         Comment: Serve index.html for folder URLs
         Runtime: cloudfront-js-2.0
-      FunctionCode: |
-        function handler(event) {
-          var request = event.request;
-          var uri = request.uri;
-          if (uri.endsWith('/')) {
-            request.uri = uri + 'index.html';
-          } else if (uri.split('/').pop().indexOf('.') === -1) {
-            return {
-              statusCode: 301,
-              statusDescription: 'Moved Permanently',
-              headers: { location: { value: uri + '/' } }
-            };
+      FunctionCode: !Sub
+        - |
+          function handler(event) {
+            var request = event.request;
+            var uri = request.uri;
+            if (uri === '/') {
+              request.uri = '/${HomePage}';
+            } else if (uri.endsWith('/')) {
+              request.uri = uri + 'index.html';
+            } else if (uri.split('/').pop().indexOf('.') === -1) {
+              return {
+                statusCode: 301,
+                statusDescription: 'Moved Permanently',
+                headers: { location: { value: uri + '/' } }
+              };
+            }
+            return request;
           }
-          return request;
-        }
+        - HomePage: !If [IsVhfSite, vhf.html, index.html]
 
   SecurityHeadersPolicy:
     Type: AWS::CloudFront::ResponseHeadersPolicy
@@ -317,12 +333,12 @@ Resources:
     Type: AWS::CloudFront::Distribution
     Properties:
       DistributionConfig:
-        Comment: ARRL 10 GHz Contest Log Analyzer
+        Comment: !If [IsVhfSite, ARRL VHF Contest Log Analyzer, ARRL 10 GHz Contest Log Analyzer]
         Enabled: true
         HttpVersion: http2and3
         IPV6Enabled: true
         PriceClass: PriceClass_100
-        DefaultRootObject: index.html
+        DefaultRootObject: !If [IsVhfSite, vhf.html, index.html]
         Aliases: !If
           - HasDomain
           - !If [HasAlternateDomain, [!Ref DomainName, !Ref AlternateDomainName], [!Ref DomainName]]

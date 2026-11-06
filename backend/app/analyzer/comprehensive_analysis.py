@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 from data_source import (
+    file_safe_call,
     load_source_or_exit, build_arg_parser,
     normalize_band, band_multiplier, BAND_ORDER,
 )
@@ -363,7 +364,7 @@ def get_output_filename(contact_data, base_name, callsign="UNKNOWN"):
         # Handle yyyy-mm-dd format
         last_date = str(last_date).replace('-', '')
     
-    return f"{callsign}_{base_name}_{last_date}.txt"
+    return f"{file_safe_call(callsign)}_{base_name}_{last_date}.txt"
 
 if __name__ == "__main__":
     main()

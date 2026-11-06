@@ -27,10 +27,10 @@
         </div>
 
         <div id="filePanel">
-          <input type="file" id="logFiles" multiple accept=".log,.csv,.txt,.cbr" class="visually-hidden">
+          <input type="file" id="logFiles" multiple accept=".log,.cbr,.adi,.adif,.csv,.txt" class="visually-hidden">
           <label for="logFiles" class="drop-zone" id="dropZone">
             <strong>Choose log files</strong> or drag them here
-            <span class="hint">Cabrillo (.log) or CSV (.csv / .txt) &middot; up to 4 files, 1 MB each</span>
+            <span class="hint">Cabrillo (.log), ADIF (.adi) or CSV (.csv / .txt) &middot; up to 4 files, 1 MB each</span>
           </label>
           <ul id="fileList" class="file-list" hidden></ul>
           <p class="hint">
@@ -52,8 +52,8 @@
         <div class="row">
           <div class="col">
             <label for="callsign" class="label">Your call sign</label>
-            <input type="text" id="callsign" class="input upper" maxlength="10" autocomplete="off" spellcheck="false" placeholder="e.g. K2UA">
-            <p class="hint">Required for CSV and Google Sheets logs. Cabrillo logs use their CALLSIGN: line.</p>
+            <input type="text" id="callsign" class="input upper" maxlength="16" autocomplete="off" spellcheck="false" placeholder="e.g. K2UA">
+            <p class="hint">Required for CSV and Google Sheets logs. Cabrillo and ADIF logs carry their own.</p>
           </div>
           <div class="col">
             <label for="bandCategory" class="label">Band category</label>
@@ -145,6 +145,9 @@
       <h2>Log formats</h2>
       <p><strong>Cabrillo (.log)</strong> &ndash; the standard contest submission format. QSO lines look like
         <code>QSO: 10G CW 2026-08-15 1005 K2UA EN91KT KB8VAO EN91IS</code>.</p>
+      <p><strong>ADIF (.adi)</strong> &ndash; from N1MM+, WSJT-X, LoTW or any logger, with <code>CALL</code>,
+        <code>GRIDSQUARE</code>, <code>MY_GRIDSQUARE</code>, <code>BAND</code> (or <code>FREQ</code>), <code>QSO_DATE</code> and
+        <code>TIME_ON</code>.</p>
       <p><strong>CSV (.csv), or a Google Sheet</strong> &ndash; one row per QSO with the columns
         <code>date, band, sourcegrid, time, call, grid</code>:</p>
       <pre>date,band,sourcegrid,time,call,grid
@@ -179,6 +182,7 @@
       <a href="https://github.com/rusk2ua/grid-mapper" rel="noopener">grid-mapper</a>
       <span id="gridMapperVersion"></span> by K2UA &middot;
       <a href="https://github.com/rusk2ua/10ghz-web-logger-analyzer" rel="noopener">Source &amp; issues</a> &middot;
+      <a href="https://vhf.microwavedx.com/">VHF contests site</a> &middot;
       Not affiliated with the ARRL. Your logs are used only to generate your results.
     </p>
     <p class="footer-tagline">
