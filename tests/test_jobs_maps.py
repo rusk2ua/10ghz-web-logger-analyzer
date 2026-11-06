@@ -242,5 +242,6 @@ def test_movie_score_matches_the_analyzer(call_api, output_dir, no_background, l
     with contextlib.redirect_stdout(io.StringIO()):
         loaded = data_source.load_source_or_exit(str(path), verbose=False)
         claimed = cabrillo.calculate_score(loaded[0] if isinstance(loaded, tuple) else loaded)
+    assert data["scoring"] is not None, "movie has no score: the log was not read as ARRL 10 GHz and Up"
     assert data["scoring"]["total"] == data["events"][-1]["sc"] == claimed
 
