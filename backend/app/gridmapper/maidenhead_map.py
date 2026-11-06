@@ -942,8 +942,11 @@ def _write_leaflet_html(data, output_file, page_title):
     create_grid_map_html/create_path_map_html."""
     out = _LEAFLET_PAGE_TEMPLATE.replace('__TITLE__', _esc(page_title))
     out = out.replace('__TITLEBAR__', _esc(data.get('title', page_title)).replace('\n', '<br>'))
-    out = out.replace('__DATA_JSON__', json.dumps(data))
-    with open(output_file, 'w') as f:
+    # Escape <, > and & so nothing in the log (a callsign, say) can end the script block.
+    data_json = (json.dumps(data)
+                 .replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026'))
+    out = out.replace('__DATA_JSON__', data_json)
+    with open(output_file, 'w', encoding='utf-8') as f:
         f.write(out)
 
 def create_path_map(home_grid, contacts, callsign, band, output_file=None,

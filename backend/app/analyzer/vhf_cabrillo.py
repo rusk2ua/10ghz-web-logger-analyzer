@@ -228,10 +228,10 @@ def main():
         print(f"Warning: {warning}")
 
     stem = f"{file_safe_call(callsign)}_{contest.file_tag}"
-    with open(f"{stem}.log", 'w') as f:
+    with open(f"{stem}.log", 'w', encoding='utf-8') as f:
         f.write(generate_cabrillo(df, callsign, contest_id, category, header, result['total'],
                                   analog_only))
-    with open(f"{stem}_Summary.txt", 'w') as f:
+    with open(f"{stem}_Summary.txt", 'w', encoding='utf-8') as f:
         f.write(generate_summary(df, callsign, contest_id, category, result, detection,
                                  analog_only))
     print(f"\nCabrillo file saved as: {stem}.log")

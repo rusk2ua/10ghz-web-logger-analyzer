@@ -298,7 +298,9 @@ def score_vhf(df, contest_id, category='SO', analog_only=False):
             reason = f"{row.band} isn't a contest band"
         elif band_limit and band not in band_limit:
             reason = f"{band} doesn't count for {name}"
-        elif when is not None and not contest.in_window(when):
+        elif when is None:
+            reason = "missing or unreadable date"
+        elif not contest.in_window(when):
             reason = "outside the contest period"
         elif not re.match(r'^[A-R]{2}\d{2}$', grid) or not re.match(r'^[A-R]{2}\d{2}$', my_grid):
             reason = "missing or invalid grid square"

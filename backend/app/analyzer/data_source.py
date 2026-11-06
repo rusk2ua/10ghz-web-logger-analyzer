@@ -350,8 +350,9 @@ def parse_adif_file(filename):
             'time': record.get('TIME_ON', '').strip()[:4],
             'call': call,
             'grid': record.get('GRIDSQUARE', '').strip().upper(),
-            'mode': (record.get('SUBMODE') if record.get('MODE', '').upper() == 'MFSK'
-                     else record.get('MODE', '')).strip().upper(),
+            # FT4, Q65 and friends are MODE MFSK with the real mode in SUBMODE.
+            'mode': ((record.get('SUBMODE') if record.get('MODE', '').upper() == 'MFSK' else None)
+                     or record.get('MODE', '')).strip().upper(),
         })
         station = (record.get('STATION_CALLSIGN') or record.get('OPERATOR') or '').strip().upper()
         if station:

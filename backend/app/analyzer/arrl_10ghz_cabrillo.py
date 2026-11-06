@@ -136,7 +136,8 @@ def generate_summary(df, header_info, total_score):
 def check_duplicates(df):
     """Check for duplicate contacts (same call, source grid, destination grid, and band)"""
     print("\n=== Duplicate Contact Check ===")
-    
+    df = df.copy()  # the helper columns below stay out of the caller's data
+
     # Normalize band names for comparison
     df['band_normalized'] = df['band'].apply(lambda x: normalize_band(x))
     
