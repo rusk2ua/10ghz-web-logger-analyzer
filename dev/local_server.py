@@ -3,6 +3,7 @@
 
     source .venv/bin/activate
     python dev/local_server.py            # then open http://localhost:8000
+    SITE_MODE=vhf python dev/local_server.py   # the VHF contests site instead
 
 Serves frontend/ as the website, sends POST /api/process, GET /api/jobs/<id>
 and POST /api/ping to the same Lambda handler that runs in AWS
@@ -32,6 +33,8 @@ import usage  # noqa: E402
 class Handler(http.server.SimpleHTTPRequestHandler):
     def translate_path(self, path):
         clean = path.split("?", 1)[0].split("#", 1)[0]
+        if clean == "/" and os.environ.get("SITE_MODE", "").lower() == "vhf":
+            return os.path.join(FRONTEND, "vhf.html")
         if clean == "/stats/data.json":
             usage.aggregate()
             return os.path.join(OUTPUT, "stats", "data.json")

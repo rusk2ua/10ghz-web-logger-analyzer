@@ -42,6 +42,24 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 data_source = importlib.import_module("data_source")
+contests = importlib.import_module("contests")
+
+# Which site this deployment is: "10ghz" (the ARRL 10 GHz and Up analyzer) or
+# "vhf" (the ARRL January/June/September VHF analyzer, which also handles 10
+# GHz and Up logs and non-contest logs). Set by the stack's SiteMode parameter.
+SITE_MODE = os.environ.get("SITE_MODE", "10ghz").strip().lower()
+if SITE_MODE not in ("10ghz", "vhf"):
+    SITE_MODE = "10ghz"
+
+# Contest choices on the VHF site: AUTO (detect it from the log), a contest
+# id, or NONE (no contest -- maps and the movie only, no score).
+CONTEST_CHOICES = ("AUTO", "NONE", contests.ARRL_VHF_JAN, contests.ARRL_VHF_JUN,
+                   contests.ARRL_VHF_SEP, contests.ARRL_10_GHZ)
+CATEGORY_CHOICES = ("AUTO",) + tuple(contests.CATEGORIES)
+# Outputs that only make sense for the ARRL 10 GHz and Up contest (they
+# score with its distance x band multiplier rules), not offered on the VHF site.
+TEN_GHZ_ONLY_OUTPUTS = ("weekend_analysis", "comprehensive_analysis", "directional_viz",
+                        "directional_location")
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +89,11 @@ MAP_OUTPUTS = {
 # doesn't also draw every per-band map.
 MOVIE_OUTPUT = "grid_movie"
 MOVIE_PATTERN = r"_contest_animation\.html$"
+# The VHF contests' Cabrillo log and summary, from the analyzer's vhf_cabrillo.py.
+VHF_PATTERNS = {
+    "cabrillo": r"_ARRL_VHF_(JAN|JUN|SEP)\.log$",
+    "summary": r"_ARRL_VHF_(JAN|JUN|SEP)_Summary\.txt$",
+}
 ALL_OUTPUTS = list(SINGLE_LOG_OUTPUTS) + list(MAP_OUTPUTS) + [MOVIE_OUTPUT] + list(MULTI_LOG_OUTPUTS)
 
 OUTPUT_LABELS = {
@@ -126,6 +149,16 @@ class LogSource:
     first_date: str = ""
     last_date: str = ""
     grids: list = field(default_factory=list)  # 4-character operating grids
+    header: dict = field(default_factory=dict)  # Cabrillo header / ADIF CONTEST_ID
+    detected: str = None                        # detected contest id, or None
+    detection: str = ""                         # why
+    category: str = "SO"                        # VHF category guessed from the header
+
+    @property
+    def log_format(self):
+        if data_source.is_adif_path(self.path):
+            return "adif"
+        return "cabrillo" if self.path.lower().endswith(".log") else "csv"
 
     @property
     def band_category(self):
@@ -154,8 +187,8 @@ def inspect_source(path, label, form_callsign=""):
 
     if df.empty:
         raise InputError(
-            f"{label}: no QSOs found. Cabrillo logs need QSO: lines; CSV logs need "
-            "columns date, band, sourcegrid, time, call, grid."
+            f"{label}: no QSOs found. Cabrillo logs need QSO: lines; ADIF logs need "
+            "<CALL:...> records; CSV logs need columns date, band, sourcegrid, time, call, grid."
         )
     missing = [c for c in data_source.RAW_COLUMNS if c not in df.columns]
     if missing:
@@ -169,11 +202,42 @@ def inspect_source(path, label, form_callsign=""):
     dates = sorted(str(d) for d in df["date"].dropna().unique())
     grids = sorted({g[:4].upper() for g in map(str, df["sourcegrid"].dropna())
                     if GRID4_RE.match(g[:4].upper())})
+    if data_source.is_adif_path(path) and not grids:
+        raise InputError(f"{label}: this ADIF log has no MY_GRIDSQUARE, so the grid you "
+                         "operated from isn't known. Add it in your logger and export again.")
+    header = data_source.read_log_header(path)
+    found = contests.detect_contest(df, header)
     return LogSource(
         label=label, path=path, callsign=callsign, qsos=len(df), bands=bands,
         first_date=dates[0] if dates else "", last_date=dates[-1] if dates else "",
-        grids=grids,
+        grids=grids, header=header, detected=found.contest_id, detection=found.reason,
+        category=contests.category_from_header(header, callsign),
     )
+
+
+def effective_contest(src, contest="AUTO"):
+    """The contest a log is scored as: on the 10 GHz site always ARRL 10 GHz
+    and Up; on the VHF site the chosen one, or the detected one for AUTO, or
+    None for NONE (or AUTO when nothing was detected)."""
+    if SITE_MODE != "vhf":
+        return contests.ARRL_10_GHZ
+    if contest == "AUTO":
+        return src.detected
+    return None if contest == "NONE" else contest
+
+
+def contest_label(contest_id):
+    found = contests.CONTESTS.get(contest_id)
+    return found.name if found else "No contest"
+
+
+def _vhf_argv(contest_id, category, analog):
+    argv = ["--contest", contest_id]
+    if category and category != "AUTO":
+        argv += ["--category", category]
+    if analog:
+        argv.append("--analog")
+    return argv
 
 
 def _answer_prompt(prompt, callsign, band_category):
@@ -223,18 +287,22 @@ def _fix_unknown_callsign(path, callsign):
     their files UNKNOWN_...; rename to the call sign from the web form."""
     name = os.path.basename(path)
     if callsign and callsign != "UNKNOWN" and name.startswith("UNKNOWN_"):
-        new_path = os.path.join(os.path.dirname(path), callsign + name[len("UNKNOWN"):])
+        new_path = os.path.join(os.path.dirname(path),
+                                data_source.file_safe_call(callsign) + name[len("UNKNOWN"):])
         os.replace(path, new_path)
         return new_path
     return path
 
 
-def run_outputs(sources, outputs, workdir, band_category="AUTO", map_options=None):
+def run_outputs(sources, outputs, workdir, band_category="AUTO", map_options=None,
+                contest="AUTO", entry_category="AUTO", analog=False):
     """Run every requested output against the sources. Returns [RunResult].
 
     map_options: {"html": bool, "osm": bool} -- grid-mapper's --html and
     --osm-basemap switches, applied to whichever map outputs are requested
     (--osm-basemap also applies to the contest movie).
+    contest / entry_category / analog: the VHF site's contest (AUTO, NONE or a
+    contest id), entry category (AUTO or a code such as R) and Analog Only.
     """
     results = []
     single = [o for o in outputs if o in SINGLE_LOG_OUTPUTS]
@@ -255,18 +323,33 @@ def run_outputs(sources, outputs, workdir, band_category="AUTO", map_options=Non
                 runs[key] = (files, notes, error)
             return runs[key]
 
+        scored_as = effective_contest(src, contest)
+        vhf_argv = (_vhf_argv(scored_as, entry_category, analog)
+                    if scored_as in contests.VHF_CONTESTS else None)
+
         for output in single:
             module_name, extra, patterns = SINGLE_LOG_OUTPUTS[output]
+            if output in VHF_PATTERNS and SITE_MODE == "vhf":
+                if scored_as is None:
+                    results.append(RunResult(output, src.label, [], "", (
+                        "No contest was detected for this log (" + src.detection + "). "
+                        "Choose the contest, or use the maps and the movie on their own.")
+                        if contest == "AUTO" else
+                        "Choose a contest to make a Cabrillo log or a contest summary."))
+                    continue
+                if vhf_argv:
+                    module_name, extra, patterns = "vhf_cabrillo", vhf_argv, [VHF_PATTERNS[output]]
             files, notes, error = run_once(module_name, extra)
             kept = [f for f in files if any(re.search(p, os.path.basename(f)) for p in patterns)]
             if not kept and not error:
                 error = "No output was produced -- see the processing notes."
             results.append(RunResult(output, src.label, kept, notes, error))
 
+        maps_from = (scored_as, vhf_argv)
         if maps:
-            results += _run_maps(src, index, maps, map_options, workdir, run_once)
+            results += _run_maps(src, index, maps, map_options, workdir, run_once, maps_from)
         if MOVIE_OUTPUT in outputs:
-            results.append(_run_movie(src, index, map_options, workdir, run_once))
+            results.append(_run_movie(src, index, map_options, workdir, run_once, maps_from))
 
     if "comparison" in outputs:
         if len(sources) < 2:
@@ -282,11 +365,49 @@ def run_outputs(sources, outputs, workdir, band_category="AUTO", map_options=Non
     return results
 
 
-def _cabrillo_for_maps(src, run_once):
+def _plain_cabrillo(src, workdir):
+    """A Cabrillo copy of a log with no CONTEST: line, for maps and a movie
+    of a log that isn't scored as a contest (the movie shows no score)."""
+    vhf = _module("vhf_cabrillo")
+    with contextlib.redirect_stdout(io.StringIO()):
+        df, _ = data_source.resolve_source(src.path, verbose=False)
+    has_mode = "mode" in df.columns
+    lines = ["START-OF-LOG: 3.0", f"CALLSIGN: {src.callsign}", "CREATED-BY: 10ghz-web-logger-analyzer"]
+    for row in df.itertuples(index=False):
+        mode = vhf.cabrillo_mode(getattr(row, "mode", "") if has_mode else "")
+        lines.append(f"QSO: {data_source.band_to_cabrillo(row.band)} {mode} {vhf._qso_date(row.date)} "
+                     f"{str(row.time).zfill(4)[:4]} {src.callsign} {str(row.sourcegrid).upper()} "
+                     f"{str(row.call).upper()} {str(row.grid).upper()}")
+    lines.append("END-OF-LOG:")
+    os.makedirs(workdir, exist_ok=True)
+    path = os.path.join(workdir, data_source.file_safe_call(src.callsign) + "_log.log")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return path
+
+
+def _cabrillo_for_maps(src, run_once, maps_from=(contests.ARRL_10_GHZ, None)):
     """grid-mapper reads Cabrillo (with the operator's grid on every QSO
-    line), so a CSV log is first converted by the upstream Cabrillo converter
-    -- the same file the "cabrillo" output produces. Returns (path or None,
-    notes, error)."""
+    line). A VHF contest log is mapped from the analyzer's VHF Cabrillo (so
+    the movie scores the chosen contest and category); a log scored as no
+    contest from a plain Cabrillo copy; and on the 10 GHz site a CSV or ADIF
+    log is converted by the 10 GHz converter -- the same file the "cabrillo"
+    output produces. Returns (path or None, notes, error)."""
+    scored_as, vhf_argv = maps_from
+    if vhf_argv:
+        files, notes, error = run_once("vhf_cabrillo", vhf_argv)
+        cabrillo = next((f for f in files if re.search(VHF_PATTERNS["cabrillo"], f)), None)
+        if cabrillo is None:
+            error = error or "Couldn't convert this log to Cabrillo for mapping -- see the processing notes."
+        return cabrillo, notes, error
+    if scored_as is None:
+        if src.path.lower().endswith(".log") and not contests.contest_from_name(src.header.get("CONTEST")):
+            return src.path, "", ""
+        try:
+            return _plain_cabrillo(src, os.path.join(os.path.dirname(src.path), "plain")), "", ""
+        except Exception as e:  # noqa: BLE001 -- reported as this output's error
+            logger.exception("plain Cabrillo conversion failed")
+            return None, "", f"Couldn't convert this log for mapping ({e})."
     if src.path.lower().endswith(".log"):
         return src.path, "", ""
     files, notes, error = run_once("arrl_10ghz_cabrillo", [])
@@ -296,10 +417,10 @@ def _cabrillo_for_maps(src, run_once):
     return cabrillo, notes, error
 
 
-def _run_maps(src, index, maps, map_options, workdir, run_once):
+def _run_maps(src, index, maps, map_options, workdir, run_once, maps_from=(contests.ARRL_10_GHZ, None)):
     """Run grid-mapper once for this log and split its files into the
     requested map outputs."""
-    cabrillo, notes, error = _cabrillo_for_maps(src, run_once)
+    cabrillo, notes, error = _cabrillo_for_maps(src, run_once, maps_from)
     if cabrillo is None:
         return [RunResult(output, src.label, [], notes, error) for output in maps]
 
@@ -323,9 +444,9 @@ def _run_maps(src, index, maps, map_options, workdir, run_once):
     return results
 
 
-def _run_movie(src, index, map_options, workdir, run_once):
+def _run_movie(src, index, map_options, workdir, run_once, maps_from=(contests.ARRL_10_GHZ, None)):
     """grid-mapper --animate-only: the whole log as one animated HTML page."""
-    cabrillo, notes, error = _cabrillo_for_maps(src, run_once)
+    cabrillo, notes, error = _cabrillo_for_maps(src, run_once, maps_from)
     if cabrillo is None:
         return RunResult(MOVIE_OUTPUT, src.label, [], notes, error)
     argv = [cabrillo, "--animate-only"]

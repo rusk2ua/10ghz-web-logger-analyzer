@@ -2,7 +2,7 @@
 
 import math
 
-from data_source import load_source_or_exit, build_arg_parser, normalize_band, BAND_ORDER
+from data_source import file_safe_call, load_source_or_exit, build_arg_parser, normalize_band, BAND_ORDER
 
 def grid_to_latlon(grid):
     """Convert 6-digit Maidenhead grid to lat/lon"""
@@ -181,7 +181,7 @@ def get_output_filename(contact_data, base_name, callsign="UNKNOWN"):
         # Handle yyyy-mm-dd format
         last_date = str(last_date).replace('-', '')
     
-    return f"{callsign}_{base_name}_{last_date}.txt"
+    return f"{file_safe_call(callsign)}_{base_name}_{last_date}.txt"
 
 if __name__ == "__main__":
     main()

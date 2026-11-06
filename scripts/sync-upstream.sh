@@ -51,7 +51,8 @@ sync_analyzer() {
   local ref="${1:-main}" url="${ANALYZER_URL:-https://github.com/rusk2ua/10ghz-log-analyzer.git}"
   local dest="$ROOT/backend/app/analyzer"
   local scripts=(data_source.py arrl_10ghz_cabrillo.py station_report.py weekend_analysis.py
-                 comprehensive_analysis.py directional_visualization.py log_comparison.py)
+                 comprehensive_analysis.py directional_visualization.py log_comparison.py
+                 contests.py vhf_cabrillo.py)
   checkout analyzer "$url" "$ref" "${ANALYZER_DIR:-${UPSTREAM_DIR:-}}"
   mkdir -p "$dest" "$ROOT/tests/fixtures" "$ROOT/frontend/samples"
   for f in "${scripts[@]}"; do

@@ -5,10 +5,10 @@ import math
 
 from data_source import (
     load_source_or_exit, build_arg_parser,
-    normalize_band, band_multiplier, band_to_cabrillo, BAND_ORDER,
+    normalize_band, band_multiplier, band_to_cabrillo, TEN_GHZ_BANDS, file_safe_call,
 )
 
-VERSION = "1.5.3"
+VERSION = "1.7.0"
 
 def grid_to_latlon(grid):
     """Convert 6-digit Maidenhead grid to lat/lon"""
@@ -76,6 +76,8 @@ def generate_summary(df, header_info, total_score):
     band_stats = {}
     for _, row in df.iterrows():
         band = normalize_band(row['band'])  # Normalize band name
+        if band not in TEN_GHZ_BANDS:
+            continue  # below 10 GHz: doesn't count in this contest
         call = row['call'].upper()
         distance = calculate_distance(row['sourcegrid'], row['grid'])
         distance_km = max(1, math.ceil(distance))
@@ -102,7 +104,7 @@ def generate_summary(df, header_info, total_score):
     total_points = 0
     total_unique = set()
 
-    for band_name in BAND_ORDER:
+    for band_name in TEN_GHZ_BANDS:
         if band_name in band_stats:
             stats = band_stats[band_name]
             qsos = stats['qsos']
@@ -134,7 +136,8 @@ def generate_summary(df, header_info, total_score):
 def check_duplicates(df):
     """Check for duplicate contacts (same call, source grid, destination grid, and band)"""
     print("\n=== Duplicate Contact Check ===")
-    
+    df = df.copy()  # the helper columns below stay out of the caller's data
+
     # Normalize band names for comparison
     df['band_normalized'] = df['band'].apply(lambda x: normalize_band(x))
     
@@ -172,7 +175,11 @@ def calculate_score(df):
     
     print("\n=== Points Breakdown ===")
     
+    skipped = 0
     for _, row in df.iterrows():
+        if normalize_band(row['band']) not in TEN_GHZ_BANDS:
+            skipped += 1  # below 10 GHz: doesn't count in this contest
+            continue
         # Distance points with band multiplier and minimum of 1 km
         distance = calculate_distance(row['sourcegrid'], row['grid'])
         distance_km = max(1, math.ceil(distance))  # Round up and minimum 1 km per QSO
@@ -200,6 +207,9 @@ def calculate_score(df):
     print(f"Bonus points: {bonus_points}")
     print(f"Total score: {total_score + bonus_points}")
     
+    if skipped:
+        print(f"\nNOTE: {skipped} QSO(s) below 10 GHz don't count in this contest and were skipped")
+
     if duplicate_count > 0:
         print(f"\nNOTE: {duplicate_count} duplicate contacts detected above - review log for accuracy")
     
@@ -302,8 +312,8 @@ def main():
     summary_content = generate_summary(contact_data, header_info, total_score)
     
     # Save files
-    cabrillo_filename = f"{header_info['callsign']}_ARRL_10GHZ.log"
-    summary_filename = f"{header_info['callsign']}_ARRL_10GHZ_Summary.txt"
+    cabrillo_filename = f"{file_safe_call(header_info['callsign'])}_ARRL_10GHZ.log"
+    summary_filename = f"{file_safe_call(header_info['callsign'])}_ARRL_10GHZ_Summary.txt"
     
     with open(cabrillo_filename, 'w') as f:
         f.write(cabrillo_content)

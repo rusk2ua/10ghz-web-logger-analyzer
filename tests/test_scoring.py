@@ -20,7 +20,9 @@ RULES_MULTIPLIERS = {
 
 
 def test_band_table_matches_rules():
-    assert {name: mult for name, _, mult, _ in BAND_BUCKETS} == RULES_MULTIPLIERS
+    # Bands below 10 GHz (added for the VHF contests) don't count in 10 GHz and Up.
+    assert {name: mult for name, _, mult, _, _ in BAND_BUCKETS if mult} == RULES_MULTIPLIERS
+    assert band_multiplier("144") == 0
 
 
 @pytest.mark.parametrize("band, expected", [

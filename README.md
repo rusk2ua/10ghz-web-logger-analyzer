@@ -1,8 +1,17 @@
-# ARRL 10 GHz and Up Contest Log Analyzer — Web Edition
+# ARRL 10 GHz and Up / VHF Contest Log Analyzer — Web Edition
 
 A public web front end for K2UA's [10ghz-log-analyzer](https://github.com/rusk2ua/10ghz-log-analyzer)
-and [grid-mapper](https://github.com/rusk2ua/grid-mapper). Anyone can upload a contest log
-(Cabrillo or CSV) or paste a Google Sheets link and get:
+and [grid-mapper](https://github.com/rusk2ua/grid-mapper). It runs as two sites from this one
+codebase:
+
+- **[10ghz.microwavedx.com](https://10ghz.microwavedx.com)** for the ARRL 10 GHz and Up Contest.
+- **[vhf.microwavedx.com](https://vhf.microwavedx.com)** for the ARRL January, June and September
+  VHF Contests, built for rovers. The contest is detected from the log (or chosen); the entry
+  category (Classic/Limited/Unlimited Rover, single-op, 3-Band, FM-Only, multi-op, Analog Only)
+  decides the scoring; and a *No contest* choice maps any log, such as a home-station log,
+  without a score. See [The VHF site](#the-vhf-site).
+
+Anyone can upload a contest log (Cabrillo, ADIF or CSV) or paste a Google Sheets link and get:
 
 - a **Cabrillo log** ready to submit, with claimed score
 - the **contest summary** (score by band)
@@ -18,11 +27,37 @@ and [grid-mapper](https://github.com/rusk2ua/grid-mapper). Anyone can upload a c
 
 The web app runs both CLI projects' own scripts, vendored unmodified, so its scores,
 reports and maps are identical to the command-line versions. Currently vendored:
-10ghz-log-analyzer **v1.6.2** and grid-mapper **v1.6.2** (see `UPSTREAM.txt` in
+10ghz-log-analyzer **v1.7.0** and grid-mapper **v1.7.0** (see `UPSTREAM.txt` in
 `backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.4.3**. See the [version history](#version-history).
+**v2.5.0**. See the [version history](#version-history).
+
+## The VHF site
+
+The stack parameter `SiteMode` picks the site: `10ghz` (home page `frontend/index.html`) or
+`vhf` (home page `frontend/vhf.html`). Both sites share the Lambda, `app.js` and the styles;
+the VHF one passes `contest`, `category` and `analog` with each request (see [API](#api)).
+
+- **Contests:** the ARRL January, June and September VHF Contests, scored by the analyzer's
+  `vhf_cabrillo.py` (Jan/Jun/Sep VHF rules v1.2), plus ARRL 10 GHz and Up logs.
+- **Detection:** the log's `CONTEST:` line (or ADIF `CONTEST_ID`), else its dates. The results
+  say what was detected; the dropdown overrides it.
+- **No contest:** maps and the movie without a score, for any log.
+- **Outputs:** Cabrillo, summary (with rover stops and grids activated), station report, log
+  comparison, path and grid maps, and the contest movie, which shades each grid a rover activates.
+  The weekend, comprehensive and directional reports score with the 10 GHz rules, so they're
+  only on the 10 GHz site.
+
+Deploy it as its own stack, next to the 10 GHz one:
+
+```bash
+SITE_MODE=vhf STACK_NAME=arrl-vhf-web DOMAIN_NAME=vhf.microwavedx.com ./deploy.sh
+STACK_NAME=arrl-vhf-web ./verify-deployment.sh
+```
+
+It gets its own certificate, buckets, rate limits, budgets and usage dashboard. Run it
+locally with `SITE_MODE=vhf python dev/local_server.py`.
 
 ## Architecture
 
@@ -308,6 +343,9 @@ the image.
   "sheetsUrl": "https://docs.google.com/spreadsheets/d/...",
   "callsign": "K2UA",
   "bandCategory": "AUTO",
+  "contest": "AUTO",
+  "category": "AUTO",
+  "analog": false,
   "outputs": ["cabrillo", "summary", "station_report", "weekend_analysis",
               "comprehensive_analysis", "directional_viz", "directional_location", "comparison",
               "grid_paths", "grid_density"],
@@ -315,6 +353,12 @@ the image.
   "mapOsm": false
 }
 ```
+
+`bandCategory` (`AUTO`, `10G` or `ALL`) is for the 10 GHz site. `contest` (`AUTO`, `NONE`,
+`ARRL-VHF-JAN`, `ARRL-VHF-JUN`, `ARRL-VHF-SEP` or `ARRL-10-GHZ`), `category` (`AUTO`, `SO`, `SOP`,
+`SO3B`, `SOFM`, `R`, `RL`, `RU`, `LM` or `UM`) and `analog` are for the VHF site, where each log in
+the result also carries `contest`, `contestHow` (what it was detected from, or `chosen`) and
+`category`. Files may be Cabrillo, ADIF or CSV text.
 
 It returns HTTP 202 with `{"jobId": "..."}`. Input that can be checked immediately (no
 outputs, bad call sign, oversized file) returns HTTP 400 with a readable `message` instead.
@@ -329,14 +373,29 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
 
 ## Known limitations
 
-- Call signs with a `/` suffix (e.g. `K2UA/R`) aren't accepted, because the upstream
-  scripts put the call sign in output file names. The 10 GHz and Up Contest has no rover
-  category, so this only matters if support for the ARRL VHF contests is added later.
+- On the VHF site, the directional plots and the weekend and comprehensive reports aren't
+  offered: they score with the 10 GHz and Up rules.
+- Uploads are limited to 1 MB per log (about 3,000 ADIF QSOs), plenty for a contest log but
+  not for years of home-station logging.
 - A job can run for up to 15 minutes (the Lambda timeout). Even a big rover log with every map
   option fits comfortably, but a job that runs longer reports an error rather than a partial
   result.
 
 ## Version history
+
+### v2.5.0 (2026-11-06): the VHF site, ADIF logs and rover call signs
+
+- **vhf.microwavedx.com.** A second site from this codebase (`SiteMode=vhf`) for the ARRL
+  January, June and September VHF Contests (analyzer v1.7.0, grid-mapper v1.7.0):
+  - contest detection, with a dropdown to override it or to pick *No contest*;
+  - every entry category, including Classic, Limited and Unlimited Rover, plus Analog Only;
+  - a summary with rover stops and grids activated;
+  - a movie that scores the contest and shades each grid as it's activated.
+- **ADIF logs** (`.adi`, `.adif`) on both sites.
+- **Rover call signs** such as `K2UA/R` are accepted (files are named `K2UA-R_...`).
+- `deploy.sh` takes `SITE_MODE=vhf` (and refuses to deploy it over the 10 GHz stack);
+  `verify-deployment.sh` checks either site; `dev/local_server.py` serves either.
+- Tests: `tests/test_vhf_site.py` (17 tests).
 
 ### v2.4.3 (2026-11-06): running score in the contest movie
 

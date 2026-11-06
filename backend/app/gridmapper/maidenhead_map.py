@@ -942,8 +942,11 @@ def _write_leaflet_html(data, output_file, page_title):
     create_grid_map_html/create_path_map_html."""
     out = _LEAFLET_PAGE_TEMPLATE.replace('__TITLE__', _esc(page_title))
     out = out.replace('__TITLEBAR__', _esc(data.get('title', page_title)).replace('\n', '<br>'))
-    out = out.replace('__DATA_JSON__', json.dumps(data))
-    with open(output_file, 'w') as f:
+    # Escape <, > and & so nothing in the log (a callsign, say) can end the script block.
+    data_json = (json.dumps(data)
+                 .replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026'))
+    out = out.replace('__DATA_JSON__', data_json)
+    with open(output_file, 'w', encoding='utf-8') as f:
         f.write(out)
 
 def create_path_map(home_grid, contacts, callsign, band, output_file=None,
@@ -1055,7 +1058,7 @@ def create_path_map(home_grid, contacts, callsign, band, output_file=None,
     if not output_file:
         # Home grid is included so multiple operating locations (e.g. a rover)
         # never collide on the same filename for a given band/region.
-        output_file = f"{callsign}_{band}_{home_grid}_{region_name}_grid_paths_map.png"
+        output_file = f"{file_safe_call(callsign)}_{band}_{home_grid}_{region_name}_grid_paths_map.png"
 
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close(fig)
@@ -1136,7 +1139,7 @@ def create_path_map_html(home_grid, contacts, qso_records, callsign, band, outpu
     }
 
     if not output_file:
-        output_file = f"{callsign}_{band}_{home_grid}_{region_name}_grid_paths_map.html"
+        output_file = f"{file_safe_call(callsign)}_{band}_{home_grid}_{region_name}_grid_paths_map.html"
 
     _write_leaflet_html(data, output_file, f"{callsign} - {band} - {home_grid}")
     print(f"Interactive path map saved as {output_file}")
@@ -1287,9 +1290,9 @@ def create_grid_map(grids, callsign, band, continents=None, output_file=None, lo
 
     if not output_file:
         if location:
-            output_file = f"{callsign}_{band}_{location}_{region_name}_maidenhead_map.png"
+            output_file = f"{file_safe_call(callsign)}_{band}_{location}_{region_name}_maidenhead_map.png"
         else:
-            output_file = f"{callsign}_{band}_{region_name}_maidenhead_map.png"
+            output_file = f"{file_safe_call(callsign)}_{band}_{region_name}_maidenhead_map.png"
 
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close(fig)
@@ -1396,9 +1399,9 @@ def create_grid_map_html(grids, qso_records, callsign, band, continents=None, ou
 
     if not output_file:
         if location:
-            output_file = f"{callsign}_{band}_{location}_{region_name}_maidenhead_map.html"
+            output_file = f"{file_safe_call(callsign)}_{band}_{location}_{region_name}_maidenhead_map.html"
         else:
-            output_file = f"{callsign}_{band}_{region_name}_maidenhead_map.html"
+            output_file = f"{file_safe_call(callsign)}_{band}_{region_name}_maidenhead_map.html"
 
     _write_leaflet_html(data, output_file, f"{callsign} - {band} - {region_name}")
     print(f"Interactive map saved as {output_file}")
@@ -1411,21 +1414,33 @@ def create_grid_map_html(grids, qso_records, callsign, band, continents=None, ou
 # follows the station from one operating location to the next while a line to
 # each worked station is drawn in as the contact is made, colored by band.
 #
-# Band styling. Each contest band has a fixed color (never re-assigned when a
-# log uses fewer bands), taken from a dark-surface categorical palette that
-# passes the adjacent-pair color-vision checks. Any two bands can be on screen
-# together, so color is never the only cue: every band also has its own line
-# dash pattern and endpoint marker shape, and the legend names and counts them.
+# Band styling. Each band from 50 MHz up has a fixed style (never re-assigned
+# when a log uses fewer bands), keyed by its display name (band_label). The
+# colors come from a dark-surface categorical palette of eight hues, ordered
+# so every pair of neighbouring bands passes the color-vision checks. A rover
+# log can have ten or more bands, so a few far-apart bands share a hue: color
+# is never the only cue. Every band also has its own line dash pattern and
+# endpoint marker shape (no two bands share both a hue and either of those),
+# and the legend names and counts them.
 _ANIMATION_BAND_STYLES = [
-    # band,  color,     dash pattern,   marker shape
-    ('10G',  '#3987e5', None,           'circle'),
-    ('24G',  '#d95926', '9 5',          'square'),
-    ('47G',  '#199e70', '2 4',          'diamond'),
-    ('75G',  '#c98500', '10 4 2 4',     'triangle'),
-    ('123G', '#d55181', '15 6',         'triangle-down'),
-    ('134G', '#008300', '4 3',          'hexagon'),
-    ('241G', '#9085e9', '12 3 3 3 3 3', 'plus'),
-    ('300G', '#e66767', '1 5',          'star'),
+    # band,      color,     dash pattern,   marker shape
+    ('50 MHz',  '#c98500', None,           'circle'),
+    ('144 MHz', '#d55181', None,           'square'),
+    ('222 MHz', '#008300', None,           'diamond'),
+    ('432 MHz', '#e66767', '6 3',          'triangle'),
+    ('902 MHz', '#199e70', '6 3',          'circle'),
+    ('1.2 GHz', '#d95926', '6 3',          'hexagon'),
+    ('2.3 GHz', '#9085e9', '3 3',          'diamond'),
+    ('3.4 GHz', '#c98500', '3 3',          'star'),
+    ('5.7 GHz', '#d55181', '3 3',          'plus'),
+    ('10 GHz',  '#3987e5', None,           'circle'),
+    ('24 GHz',  '#d95926', '9 5',          'square'),
+    ('47 GHz',  '#199e70', '2 4',          'diamond'),
+    ('78 GHz',  '#c98500', '10 4 2 4',     'triangle'),
+    ('122 GHz', '#d55181', '15 6',         'triangle-down'),
+    ('134 GHz', '#008300', '4 3',          'hexagon'),
+    ('241 GHz', '#9085e9', '12 3 3 3 3 3', 'plus'),
+    ('300 GHz', '#e66767', '1 5',          'star'),
 ]
 _ANIMATION_OTHER_COLOR = '#8f948f'
 _ANIMATION_OTHER_MARKERS = ['circle', 'square', 'diamond', 'triangle', 'triangle-down', 'hexagon', 'plus', 'star']
@@ -1456,7 +1471,12 @@ def default_animation_seconds(n_contacts, n_moves):
 # is worked on each band. Distances use the analyzer's own grid convention
 # (sub-square centers; a 4-character grid is read as its "AA" sub-square)
 # and a 6371 km Earth radius, which differ slightly from the map's.
-_SCORED_CONTESTS = {'ARRL-10-GHZ': 'ARRL 10 GHz and Up'}
+_SCORED_CONTESTS = {
+    'ARRL-10-GHZ': 'ARRL 10 GHz and Up',
+    'ARRL-VHF-JAN': 'ARRL January VHF',
+    'ARRL-VHF-JUN': 'ARRL June VHF',
+    'ARRL-VHF-SEP': 'ARRL September VHF',
+}
 
 
 def _arrl10_multiplier(band):
@@ -1489,6 +1509,146 @@ def _arrl10_points(home, grid, band):
     return max(1, math.ceil(km)) * _arrl10_multiplier(band)
 
 
+# ARRL January, June and September VHF scoring (rules v1.2), mirroring the
+# 10ghz-log-analyzer's contests.score_vhf exactly: QSO points by band (902 MHz
+# and 1.2 GHz 3, 2.3 GHz and up 4 -- doubled to 4 and 8 in January); each
+# station once per band per grid pair; multipliers are grids worked per band,
+# plus one per grid activated for a rover; category band and mode limits;
+# QSOs outside the contest weekend or with an aeronautical mobile don't count.
+# contest -> (month, candidate n-th full weekends, Saturday start hour UTC,
+# Monday end hour UTC).
+_VHF_CONTESTS = {
+    'ARRL-VHF-JAN': (1, (3, 4), 19, 3),
+    'ARRL-VHF-JUN': (6, (2,), 18, 2),
+    'ARRL-VHF-SEP': (9, (2,), 18, 2),
+}
+_VHF_CATEGORY_BANDS = {
+    'SO3B': ('50 MHz', '144 MHz', '432 MHz'),
+    'SOFM': ('50 MHz', '144 MHz', '222 MHz', '432 MHz', '902 MHz', '1.2 GHz'),
+    'RL': ('50 MHz', '144 MHz', '222 MHz', '432 MHz'),
+}
+_ROVER_CATEGORIES = ('R', 'RL', 'RU')
+_ANALOG_MODES = {'CW', 'PH', 'FM', 'SSB', 'USB', 'LSB', 'AM'}
+_GRID4_RE = re.compile(r'^[A-R]{2}\d{2}$')
+
+# Display names for bands, as the 10ghz-log-analyzer writes them:
+# (low MHz, high MHz, name). 75 GHz is shown as 78 GHz, its everyday name.
+_BAND_LABELS = [
+    (50, 54, '50 MHz'), (144, 148, '144 MHz'), (219, 225, '222 MHz'), (420, 450, '432 MHz'),
+    (902, 928, '902 MHz'), (1200, 1300, '1.2 GHz'), (2300, 2450, '2.3 GHz'),
+    (3300, 3500, '3.4 GHz'), (5650, 5925, '5.7 GHz'), (10000, 10500, '10 GHz'),
+    (24000, 24250, '24 GHz'), (47000, 47200, '47 GHz'), (75000, 81000, '78 GHz'),
+    (119980, 123999, '122 GHz'), (134000, 149000, '134 GHz'), (241000, 250000, '241 GHz'),
+    (275000, float('inf'), '300 GHz'),
+]
+
+
+def band_label(band):
+    """Display name of a band ('2m' and '144' -> '144 MHz', '75G' -> '78 GHz'),
+    or the band as given if it isn't a 50 MHz-and-up band."""
+    freq = band_min_freq_mhz(str(band))
+    if freq is not None:
+        for low, high, name in _BAND_LABELS:
+            if low <= freq <= high:
+                return name
+    return str(band)
+
+
+def _nth_saturday(year, month, n):
+    first = datetime(year, month, 1)
+    return first + timedelta(days=(5 - first.weekday()) % 7 + 7 * (n - 1))
+
+
+def _vhf_in_window(contest, when):
+    month, weekends, start_hour, end_hour = _VHF_CONTESTS[contest]
+    for n in weekends:
+        saturday = _nth_saturday(when.year, month, n)
+        start = saturday.replace(hour=start_hour)
+        end = (saturday + timedelta(days=2)).replace(hour=end_hour, minute=59)
+        if start <= when <= end:
+            return True
+    return False
+
+
+def _vhf_points(contest, band):
+    freq = band_min_freq_mhz(str(band)) or 0
+    january = contest == 'ARRL-VHF-JAN'
+    if freq >= 2300:
+        return 8 if january else 4
+    if freq >= 902:
+        return 4 if january else 3
+    if freq >= 219:
+        return 2
+    return 1
+
+
+def vhf_category(header, callsign=''):
+    """Entry category code (SO, SOP, SO3B, SOFM, R, RL, RU, LM, UM) from a
+    Cabrillo header dict -- the same mapping as the 10ghz-log-analyzer."""
+    hq = str(header.get('HQ-CATEGORY', '')).lower()
+    station = str(header.get('CATEGORY-STATION', '')).upper()
+    band = str(header.get('CATEGORY-BAND', '')).upper()
+    operator = str(header.get('CATEGORY-OPERATOR', '')).upper()
+    if 'limited rover' in hq or station == 'ROVER-LIMITED':
+        return 'RL'
+    if 'unlimited rover' in hq or station == 'ROVER-UNLIMITED':
+        return 'RU'
+    if 'rover' in hq or station.startswith('ROVER'):
+        return 'R'
+    if ('3' in hq and 'band' in hq) or band in ('3-BAND', '3BAND'):
+        return 'SO3B'
+    if 'fm' in hq or band == 'FM' or str(header.get('CATEGORY-MODE', '')).upper() == 'FM':
+        return 'SOFM'
+    if 'portable' in hq or station == 'PORTABLE':
+        return 'SOP'
+    if 'limited multi' in hq or (operator == 'MULTI-OP' and band == 'LIMITED'):
+        return 'LM'
+    if 'multi' in hq or operator == 'MULTI-OP':
+        return 'UM'
+    if not station and str(callsign or header.get('CALLSIGN', '')).strip().upper().endswith('/R'):
+        return 'R'
+    return 'SO'
+
+
+def vhf_analog_only(header):
+    return ('analog' in str(header.get('HQ-CATEGORY', '')).lower()
+            or str(header.get('CATEGORY-MODE', '')).upper() == 'ANALOG'
+            or str(header.get('X-ANALOG-ONLY', '')).upper() in ('YES', 'Y', 'TRUE', '1'))
+
+
+def _vhf_running_scores(flat, contest, category='SO', analog_only=False):
+    """Running VHF contest score after each contact in flat (the movie's
+    time-ordered contacts)."""
+    rover = category in _ROVER_CATEGORIES
+    allowed = _VHF_CATEGORY_BANDS.get(category)
+    seen, band_grids, activated = set(), set(), set()
+    qso_points, scores = 0, []
+    for e in flat:
+        label = band_label(e['band'])
+        call = str(e['call']).strip().upper()
+        home, grid = str(e['home']).upper()[:4], str(e['grid']).upper()[:4]
+        mode = str(e.get('mode') or '').strip().upper()
+        counts = (
+            (band_min_freq_mhz(str(e['band'])) or 0) >= 50
+            and (not allowed or label in allowed)
+            and _vhf_in_window(contest, e['when'])
+            and _GRID4_RE.match(grid) and _GRID4_RE.match(home)
+            and not call.endswith('/AM')
+            and not (category == 'SOFM' and mode and mode != 'FM')
+            and not (analog_only and mode and mode not in _ANALOG_MODES)
+        )
+        base = call[:-2] if call.endswith('/R') else call
+        key = (label, home, base, grid)
+        if counts and key not in seen:
+            seen.add(key)
+            qso_points += _vhf_points(contest, e['band'])
+            band_grids.add((label, grid))
+            if rover:
+                activated.add(home)
+        scores.append(qso_points * (len(band_grids) + len(activated)))
+    return scores
+
+
 def _parse_qso_datetime(date_text, time_text):
     """UTC datetime from a QSO's date (YYYY-MM-DD) and time (HHMM, HH:MM,
     HH:MM:SS or a bare number such as 937 or 937.0). Returns None if either
@@ -1511,22 +1671,24 @@ def _parse_qso_datetime(date_text, time_text):
 
 
 def _animation_band_styles(bands):
-    """Style dicts (band, color, dash, marker) for the bands in a log, in
-    ascending frequency order. Contest bands keep their fixed style."""
+    """Style dicts (band, label, color, dash, marker) for the bands in a log,
+    in ascending frequency order. Bands from 50 MHz up keep their fixed style."""
     fixed = {b: (c, d, m) for b, c, d, m in _ANIMATION_BAND_STYLES}
     ordered = sorted(set(bands), key=lambda b: (band_min_freq_mhz(b) is None, band_min_freq_mhz(b) or 0, b))
-    free_slots = [s for s in _ANIMATION_BAND_STYLES if s[0] not in ordered]
+    labels = {band_label(b) for b in ordered}
+    free_slots = [s for s in _ANIMATION_BAND_STYLES if s[0] not in labels]
     styles = []
     for band in ordered:
-        if band in fixed:
-            color, dash, marker = fixed[band]
+        if band_label(band) in fixed:
+            color, dash, marker = fixed[band_label(band)]
         elif free_slots:
             _, color, dash, marker = free_slots.pop(0)
         else:
             n = len(styles)
             color, dash, marker = (_ANIMATION_OTHER_COLOR, _ANIMATION_OTHER_DASHES[n % 8],
                                    _ANIMATION_OTHER_MARKERS[n % 8])
-        styles.append({'band': band, 'color': color, 'dash': dash, 'marker': marker})
+        styles.append({'band': band, 'label': band_label(band), 'color': color, 'dash': dash,
+                       'marker': marker})
     return styles
 
 
@@ -1535,7 +1697,7 @@ def _animation_total_seconds(gaps, spans, k):
 
 
 def build_animation_data(qso_records_by_band, fallback_home_grid=None, target_seconds=None,
-                         gap_minutes=45.0, contest=None):
+                         gap_minutes=45.0, contest=None, category=None, analog_only=False):
     """Turn a log into the timeline the --animate page plays.
 
     qso_records_by_band is what parse_cabrillo_grids/parse_csv_grids return.
@@ -1548,8 +1710,14 @@ def build_animation_data(qso_records_by_band, fallback_home_grid=None, target_se
     all weekends play back to back as one period.
 
     For a contest whose scoring rules are known (contest = the Cabrillo
-    CONTEST value, e.g. ARRL-10-GHZ), each event also carries the running
-    score after it ('sc'), and data['scoring'] names the rules.
+    CONTEST value: ARRL-10-GHZ, ARRL-VHF-JAN, -JUN or -SEP), each event also
+    carries the running score after it ('sc'), and data['scoring'] names the
+    rules. category (SO, R, RL, ...; see vhf_category) and analog_only apply
+    the VHF contests' category rules; a rover category, or a /R call, scores
+    one extra multiplier per grid activated.
+
+    When the log has more than one 4-character operating grid (a rover),
+    data['activated'] lists each grid with when the station first reached it.
 
     Returns None if the log has no contact with a time, a worked grid and an
     operating grid. Otherwise a JSON-ready dict (see create_animation_html).
@@ -1568,7 +1736,7 @@ def build_animation_data(qso_records_by_band, fallback_home_grid=None, target_se
                 'order': len(flat), 'band': band, 'call': rec.get('call') or 'Unknown',
                 'grid': rec['grid'].upper(), 'home': home, 'when': when,
                 'lat': there[0], 'lon': there[1], 'hlat': here[0], 'hlon': here[1],
-                'km': grid_distance_km(home, rec['grid']),
+                'km': grid_distance_km(home, rec['grid']), 'mode': rec.get('mode'),
             })
     if not flat:
         return None
@@ -1686,8 +1854,9 @@ def build_animation_data(qso_records_by_band, fallback_home_grid=None, target_se
         'call': e['call'], 'grid': e['grid'], 'band': band_index[e['band']], 'stop': e['stop'],
         'km': round(e['km']), 'utc': epoch(e['when']), 'day': e['day'],
     } for i, e in enumerate(flat)]
-    scoring = _SCORED_CONTESTS.get((contest or '').upper())
-    if scoring:
+    contest_key = (contest or '').upper()
+    scoring = _SCORED_CONTESTS.get(contest_key)
+    if contest_key == 'ARRL-10-GHZ':
         score, worked = 0, set()
         for event, e in zip(events, flat):
             score += _arrl10_points(e['home'], e['grid'], e['band'])
@@ -1695,6 +1864,22 @@ def build_animation_data(qso_records_by_band, fallback_home_grid=None, target_se
                 worked.add((e['call'].upper(), e['band']))
                 score += 100
             event['sc'] = score
+    elif contest_key in _VHF_CONTESTS:
+        for event, score in zip(events, _vhf_running_scores(flat, contest_key, category or 'SO',
+                                                           analog_only)):
+            event['sc'] = score
+
+    # Grids activated: each 4-character operating grid, from its first QSO.
+    activated, first_at = [], {}
+    for i, e in enumerate(flat):
+        grid4 = str(e['home']).upper()[:4]
+        if grid4 not in first_at and _GRID4_RE.match(grid4):
+            first_at[grid4] = i
+            south, north, west, east = maidenhead_to_bounds(grid4)
+            activated.append({'grid': grid4, 't': round(times[i], 3),
+                              'bounds': [[south, west], [north, east]]})
+    if len(activated) < 2:
+        activated = []
     clock = [[round(times[0] - _ANIM_LEAD, 3), events[0]['utc']]] + [[ev['t'], ev['utc']] for ev in events]
 
     # Camera: three fixed zoom levels. "Area" is the one where a typical long
@@ -1711,6 +1896,7 @@ def build_animation_data(qso_records_by_band, fallback_home_grid=None, target_se
         'events': events, 'stops': stops, 'bands': bands, 'days': days, 'moves': moves,
         'segments': segments, 'clock': clock, 'duration': round(duration, 3), 'zooms': zooms,
         'scoring': {'rules': scoring, 'total': events[-1]['sc']} if scoring else None,
+        'activated': activated,
         'bounds': [[min(p[0] for p in points), min(p[1] for p in points)],
                    [max(p[0] for p in points), max(p[1] for p in points)]],
         'totals': {'qsos': len(events), 'calls': len({e['call'] for e in events}),
@@ -1766,6 +1952,7 @@ __LEAFLET_CSS__
   #hud .stat .l { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; }
   #hud .score { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--panel-edge); font-size: 13px; color: var(--ink-2); }
   #hud .score b { font: 600 18px/1 ui-monospace, Menlo, Consolas, monospace; color: var(--ink-1); margin-left: 4px; }
+  #hud .score:not([hidden]) ~ .score { margin-top: 6px; padding-top: 0; border-top: none; }
 
   #legend { top: 14px; right: 14px; padding: 10px 10px 8px; width: 200px; }
   #legend h2, #table-panel h2 { margin: 0 4px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em;
@@ -1871,6 +2058,7 @@ __LEAFLET_CSS__
     <div class="stat"><div class="n" id="n-calls">0</div><div class="l">Stations</div></div>
     <div class="stat"><div class="n" id="n-stop">0</div><div class="l">Location</div></div>
   </div>
+  <div class="score" id="act-line" hidden>Grids activated: <b id="n-act">0</b></div>
   <div class="score" id="score-line" hidden>Cumulative Score: <b id="score">0</b></div>
 </div>
 
@@ -2003,6 +2191,15 @@ const DATA = __DATA_JSON__;
   // Where the operator has been: a faint dotted trail and a ring at each past stop.
   var trail = L.polyline([], { renderer: canvas, color: '#c3c2b7', weight: 1.5, opacity: 0.55,
     dashArray: '1 6', lineCap: 'round', interactive: false }).addTo(map);
+  // Grids activated (rover logs): each operating grid square is shaded from
+  // the moment the station first reaches it.
+  var A = D.activated || [];
+  var actRects = A.map(function (a) {
+    var rect = L.rectangle(a.bounds, { renderer: canvas, color: '#c3c2b7', weight: 1, opacity: 0.55,
+      dashArray: '4 4', fillColor: '#c3c2b7', fillOpacity: 0.07, interactive: false });
+    return rect;
+  });
+
   var stopRings = S.map(function (s, i) {
     var ring = L.circleMarker([s.lat, s.lon], { renderer: canvas, radius: 5, color: '#c3c2b7', weight: 1.5,
       fillColor: '#0e1217', fillOpacity: 1, opacity: 0.9 });
@@ -2041,7 +2238,7 @@ const DATA = __DATA_JSON__;
     var b = B[e.band], s = S[e.stop];
     var el = document.createElement('div');
     var c = document.createElement('b'); c.textContent = e.call; el.appendChild(c);
-    el.appendChild(document.createTextNode(' · ' + b.band + ' · ' + e.grid));
+    el.appendChild(document.createTextNode(' · ' + b.label + ' · ' + e.grid));
     el.appendChild(document.createElement('br'));
     el.appendChild(document.createTextNode(e.km + ' km from ' + s.grid + ' · ' + utcStamp(e.utc)));
     return el;
@@ -2204,6 +2401,14 @@ const DATA = __DATA_JSON__;
     text('n-calls', String(calls[n]));
     text('n-stop', (st.stop + 1) + '/' + S.length);
     if (D.scoring) text('score', (n ? E[n - 1].sc : 0).toLocaleString('en-US'));
+    var reachedGrids = 0;
+    actRects.forEach(function (r, idx) {
+      var want = T >= A[idx].t;
+      if (want) reachedGrids++;
+      if (want && !map.hasLayer(r)) r.addTo(map);
+      if (!want && map.hasLayer(r)) map.removeLayer(r);
+    });
+    if (A.length) text('n-act', String(reachedGrids));
     var whereEl = $('where');
     var whereText = st.move ? 'Relocating ' + S[st.move.from].grid + ' → ' + S[st.move.to].grid
                             : 'Operating from ' + S[st.stop].grid;
@@ -2320,8 +2525,8 @@ const DATA = __DATA_JSON__;
     var btn = document.createElement('button');
     btn.type = 'button'; btn.className = 'leg'; btn.setAttribute('aria-pressed', 'true');
     btn.innerHTML = swatchSvg(b) + '<span class="name"></span><span class="count" id="count-' + k + '">0</span>';
-    btn.querySelector('.name').textContent = b.band;
-    btn.title = b.band + ': ' + b.n + ' QSO' + (b.n === 1 ? '' : 's') + ' in the log';
+    btn.querySelector('.name').textContent = b.label;
+    btn.title = b.label + ': ' + b.n + ' QSO' + (b.n === 1 ? '' : 's') + ' in the log';
     btn.addEventListener('click', function () {
       visible[k] = !visible[k];
       btn.setAttribute('aria-pressed', String(visible[k]));
@@ -2342,7 +2547,7 @@ const DATA = __DATA_JSON__;
   // Table view.
   var table = $('table');
   var head = document.createElement('tr');
-  ['#', 'Grid', 'Operating day', 'UTC', 'QSOs'].concat(B.map(function (b) { return b.band; })).forEach(function (h) {
+  ['#', 'Grid', 'Operating day', 'UTC', 'QSOs'].concat(B.map(function (b) { return b.label; })).forEach(function (h) {
     var th = document.createElement('th'); th.textContent = h; head.appendChild(th);
   });
   table.appendChild(head);
@@ -2363,6 +2568,7 @@ const DATA = __DATA_JSON__;
   // Titles.
   text('who', D.title);
   $('score-line').hidden = !D.scoring;
+  $('act-line').hidden = !A.length;
   text('start-title', D.title);
   text('start-sub', D.totals.qsos + ' QSOs · ' + D.totals.calls + ' stations · ' + D.totals.stops +
     ' operating location' + (D.totals.stops === 1 ? '' : 's') + ' · ' + D.totals.days + ' day' +
@@ -2388,21 +2594,32 @@ const DATA = __DATA_JSON__;
 # Contest names as Cabrillo writes them -> how the --animate title shows them.
 _CONTEST_TITLES = {
     'ARRL-10-GHZ': 'ARRL 10 GHz and Up',
+    'ARRL-VHF-JAN': 'ARRL January VHF',
+    'ARRL-VHF-JUN': 'ARRL June VHF',
+    'ARRL-VHF-SEP': 'ARRL September VHF',
 }
 
 
-def _read_cabrillo_header(filename, key):
-    """Value of one Cabrillo header line (e.g. CONTEST), or None."""
+def read_cabrillo_headers(filename):
+    """All Cabrillo header lines before the first QSO, as a dict with
+    upper-case tag names (CONTEST, CALLSIGN, CATEGORY-STATION, ...)."""
+    header = {}
     try:
-        with open(filename, 'r') as f:
+        with open(filename, 'r', encoding='utf-8', errors='replace') as f:
             for line in f:
-                if line.upper().startswith(key.upper() + ':'):
-                    return line.split(':', 1)[1].strip() or None
                 if line.startswith('QSO:'):
                     break
+                tag, sep, value = line.partition(':')
+                if sep and tag.strip() and tag.strip().upper() not in header:
+                    header[tag.strip().upper()] = value.strip()
     except OSError:
         pass
-    return None
+    return header
+
+
+def file_safe_call(callsign):
+    """A call sign usable in a file name: a rover's K2UA/R becomes K2UA-R."""
+    return str(callsign).strip().replace('/', '-')
 
 
 def _round_coords(obj, places=4):
@@ -2459,12 +2676,14 @@ def _leaflet_tags():
 
 
 def create_animation_html(qso_records_by_band, callsign, fallback_home_grid=None, output_file=None,
-                          contest=None, target_seconds=None, osm_basemap=False, osm_opacity=0.3):
+                          contest=None, target_seconds=None, osm_basemap=False, osm_opacity=0.3,
+                          category=None, analog_only=False):
     """Write the --animate page: the whole log replayed as a movie, following
     the station between operating locations with each contact drawn in as it
     was made, colored by band. Returns the file name, or None if the log has
     nothing to animate (no contacts with a time and both grids)."""
-    data = build_animation_data(qso_records_by_band, fallback_home_grid, target_seconds, contest=contest)
+    data = build_animation_data(qso_records_by_band, fallback_home_grid, target_seconds, contest=contest,
+                                category=category, analog_only=analog_only)
     if data is None:
         print("Skipping --animate: no contacts with a date, time, worked grid and operating grid")
         return None
@@ -2486,7 +2705,7 @@ def create_animation_html(qso_records_by_band, callsign, fallback_home_grid=None
     data['title'] = f"{callsign} · {contest_title} {year.year}" if contest_title else f"{callsign} · {year.year}"
 
     if output_file is None:
-        output_file = f"{callsign}_contest_animation.html"
+        output_file = f"{file_safe_call(callsign)}_contest_animation.html"
     # Escape <, > and & so nothing in the log (a callsign, say) can end the script block.
     data_json = (json.dumps(data, separators=(',', ':'))
                  .replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026'))
@@ -2612,9 +2831,10 @@ def main():
         if override_home_grid:
             animate_records = {band: [dict(r, home_grid=override_home_grid) for r in records]
                                for band, records in qso_records_by_band.items()}
-        contest = None if filename.lower().endswith('.csv') else _read_cabrillo_header(filename, 'CONTEST')
+        header = {} if filename.lower().endswith('.csv') else read_cabrillo_headers(filename)
         create_animation_html(animate_records, callsign, override_home_grid or detected_home_grid,
-                              contest=contest, target_seconds=args.animate_seconds,
+                              contest=header.get('CONTEST'), target_seconds=args.animate_seconds,
+                              category=vhf_category(header, callsign), analog_only=vhf_analog_only(header),
                               osm_basemap=args.osm_basemap, osm_opacity=args.osm_opacity)
         if args.animate_only:
             return

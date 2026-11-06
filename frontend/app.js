@@ -1,4 +1,5 @@
-// ARRL 10 GHz log analyzer - browser side.
+// ARRL 10 GHz / VHF log analyzer - browser side, for both sites (index.html is
+// the 10 GHz and Up site, vhf.html the VHF one: <body data-site="vhf">).
 // Reads the chosen logs as text, POSTs them to /api/process, and shows the
 // generated files. No frameworks, no inline scripts (the site's CSP forbids them).
 (function () {
@@ -11,6 +12,7 @@
   const MAX_WAIT_MS = 20 * 60 * 1000;
 
   const $ = (id) => document.getElementById(id);
+  const VHF_SITE = document.body.dataset.site === 'vhf';
   const form = $('processForm');
   const fileInput = $('logFiles');
   const dropZone = $('dropZone');
@@ -115,7 +117,7 @@
   });
 
   $('callsign').addEventListener('input', (e) => {
-    e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9/]/g, '');
   });
 
   // ------------------------------------------------------------ status / errors
@@ -200,11 +202,17 @@
     const outputs = [...form.querySelectorAll('input[name="outputs"]:checked')].map((c) => c.value);
     const payload = {
       callsign: $('callsign').value.trim(),
-      bandCategory: $('bandCategory').value,
       outputs,
       mapHtml: $('mapHtml').checked,
       mapOsm: $('mapOsm').checked,
     };
+    if (VHF_SITE) {
+      payload.contest = $('contest').value;
+      payload.category = $('category').value;
+      payload.analog = $('analog').checked;
+    } else {
+      payload.bandCategory = $('bandCategory').value;
+    }
     if (inputType() === 'files') {
       if (!chosenFiles.length) return showError('Choose at least one log file.');
       payload.files = chosenFiles;
@@ -251,14 +259,25 @@
     if (data.upstream) $('upstreamVersion').textContent = data.upstream;
     if (data.gridMapper) $('gridMapperVersion').textContent = data.gridMapper;
 
-    $('logSummary').replaceChildren(...data.logs.map((log) => el('div', { class: 'log-card' },
-      el('div', { class: 'log-call', text: log.callsign }),
-      el('div', { class: 'log-source', text: log.source }),
-      el('dl', {},
+    $('logSummary').replaceChildren(...data.logs.map((log) => {
+      const facts = [
         el('dt', { text: 'QSOs' }), el('dd', { text: String(log.qsos) }),
         el('dt', { text: 'Bands' }), el('dd', { text: log.bands.join(', ') }),
         el('dt', { text: 'Dates' }), el('dd', { text: log.firstDate === log.lastDate ? log.firstDate : `${log.firstDate} – ${log.lastDate}` }),
-        el('dt', { text: 'Category' }), el('dd', { text: log.bandCategory })))));
+      ];
+      if (log.contest !== undefined) {
+        const how = log.contestHow && log.contestHow !== 'chosen' ? `detected: ${log.contestHow}` : 'as chosen';
+        facts.push(el('dt', { text: 'Contest' }),
+          el('dd', {}, el('span', { text: log.contest }), el('small', { class: 'how', text: ` (${how})` })));
+        if (log.category) facts.push(el('dt', { text: 'Category' }), el('dd', { text: log.category }));
+      } else {
+        facts.push(el('dt', { text: 'Category' }), el('dd', { text: log.bandCategory }));
+      }
+      return el('div', { class: 'log-card' },
+        el('div', { class: 'log-call', text: log.callsign }),
+        el('div', { class: 'log-source', text: log.source }),
+        el('dl', {}, facts));
+    }));
 
     const warn = $('partialErrors');
     warn.replaceChildren(...data.errors.map((e) => el('p', { text: `${e.label} (${e.source}): ${e.message}` })));

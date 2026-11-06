@@ -175,7 +175,7 @@ def test_google_sheet_not_shared(call_api, monkeypatch):
     ({"files": [CSV], "callsign": "K2UA", "outputs": []}, "at least one output"),
     ({"files": [CSV], "callsign": "K2UA", "outputs": ["rm -rf"]}, "Unknown output"),
     ({"files": [CSV], "outputs": ["summary"]}, "Enter your call sign"),
-    ({"files": [CSV], "callsign": "K2UA/R", "outputs": ["summary"]}, "/ suffix"),
+    ({"files": [CSV], "callsign": "K2UA//R", "outputs": ["summary"]}, "valid call sign"),
     ({"files": [CSV], "callsign": "HELLO", "outputs": ["summary"]}, "valid call sign"),
     ({"files": [CSV], "callsign": "K2UA", "bandCategory": "24G", "outputs": ["summary"]}, "Band category"),
     ({"outputs": ["summary"]}, "Upload a log"),

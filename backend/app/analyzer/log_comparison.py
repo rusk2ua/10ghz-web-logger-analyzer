@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import math
 import sys
 
-from data_source import resolve_source, source_label, build_multi_source_arg_parser, normalize_band
+from data_source import file_safe_call, resolve_source, source_label, build_multi_source_arg_parser, normalize_band
 
 def grid_to_latlon(grid):
     """Convert 6-digit Maidenhead grid to lat/lon"""
@@ -244,7 +244,7 @@ def main():
     report = generate_comparison_report(analyses)
     
     # Generate filename
-    callsigns = "_vs_".join([a['callsign'] for a in analyses])
+    callsigns = "_vs_".join([file_safe_call(a['callsign']) for a in analyses])
     output_filename = f"Log_Comparison_{callsigns}.txt"
     
     # Save report

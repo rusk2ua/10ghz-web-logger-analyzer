@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARRL VHF Contest Log Analyzer</title>
+  <meta name="description" content="Score, map and replay your ARRL January, June or September VHF Contest log -- rovers included: Cabrillo file, score summary, grid maps and an animated contest movie.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-site="vhf">
+  <header class="header">
+    <div class="header-inner">
+      <h1>ARRL VHF Contest Log Analyzer</h1>
+      <p class="tagline">Scoring, grid maps and contest movies for the ARRL January, June and September VHF Contests &ndash; built for rovers</p>
+    </div>
+  </header>
+
+  <main class="main">
+    <form id="processForm" class="card" novalidate>
+      <section class="form-section">
+        <h2><span class="step">1</span> Your log</h2>
+
+        <div class="segmented" role="radiogroup" aria-label="Log source">
+          <label><input type="radio" name="inputType" value="files" checked> Upload log files</label>
+          <label><input type="radio" name="inputType" value="sheets"> Google Sheets link</label>
+        </div>
+
+        <div id="filePanel">
+          <input type="file" id="logFiles" multiple accept=".log,.cbr,.adi,.adif,.csv,.txt" class="visually-hidden">
+          <label for="logFiles" class="drop-zone" id="dropZone">
+            <strong>Choose log files</strong> or drag them here
+            <span class="hint">Cabrillo (.log), ADIF (.adi) or CSV (.csv / .txt) &middot; up to 4 files, 1 MB each</span>
+          </label>
+          <ul id="fileList" class="file-list" hidden></ul>
+          <p class="hint">
+            No log handy? Try the sample June rover log as
+            <button type="button" class="link-btn" data-sample="samples/sample_vhf_rover.log">Cabrillo</button> or
+            <button type="button" class="link-btn" data-sample="samples/sample_vhf_rover.adi">ADIF</button>.
+          </p>
+        </div>
+
+        <div id="sheetsPanel" hidden>
+          <label for="sheetsUrl" class="label">Google Sheets link</label>
+          <input type="url" id="sheetsUrl" class="input" placeholder="https://docs.google.com/spreadsheets/d/...">
+          <p class="hint">Share the sheet as <em>Anyone with the link &rarr; Viewer</em>. The first tab is used.</p>
+        </div>
+      </section>
+
+      <section class="form-section">
+        <h2><span class="step">2</span> Contest and station</h2>
+        <div class="row">
+          <div class="col">
+            <label for="contest" class="label">Contest</label>
+            <select id="contest" class="input">
+              <option value="AUTO">Automatic &ndash; detect it from the log</option>
+              <option value="ARRL-VHF-JAN">ARRL January VHF Contest</option>
+              <option value="ARRL-VHF-JUN">ARRL June VHF Contest</option>
+              <option value="ARRL-VHF-SEP">ARRL September VHF Contest</option>
+              <option value="ARRL-10-GHZ">ARRL 10 GHz and Up Contest</option>
+              <option value="NONE">No contest &ndash; maps and movie only</option>
+            </select>
+            <p class="hint">Detected from the log&rsquo;s CONTEST: line or its dates; the results say which. Choose <em>No contest</em> for a home-station
+              or grid-chasing log: maps and the movie, without a score.</p>
+          </div>
+          <div class="col">
+            <label for="category" class="label">Entry category</label>
+            <select id="category" class="input">
+              <option value="AUTO">Automatic &ndash; from the log header</option>
+              <option value="R">Classic Rover</option>
+              <option value="RL">Limited Rover</option>
+              <option value="RU">Unlimited Rover</option>
+              <option value="SO">Single Operator (low or high power)</option>
+              <option value="SOP">Single Operator Portable</option>
+              <option value="SO3B">Single Operator, 3-Bands</option>
+              <option value="SOFM">Single Operator, FM-Only</option>
+              <option value="LM">Limited Multioperator</option>
+              <option value="UM">Unlimited Multioperator</option>
+            </select>
+            <p class="hint">Automatic reads the log header; a /R call sign means Classic Rover.</p>
+            <label class="inline-check"><input type="checkbox" id="analog"> Analog Only (CW, SSB, AM, FM &ndash; digital QSOs don&rsquo;t count)</label>
+          </div>
+        </div>
+        <div class="row row-gap">
+          <div class="col">
+            <label for="callsign" class="label">Your call sign</label>
+            <input type="text" id="callsign" class="input upper" maxlength="16" autocomplete="off" spellcheck="false" placeholder="e.g. K2UA/R">
+            <p class="hint">Required for CSV and Google Sheets logs. Cabrillo and ADIF logs carry their own.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="form-section">
+        <h2><span class="step">3</span> What to generate</h2>
+        <div class="options">
+          <label class="option"><input type="checkbox" name="outputs" value="cabrillo" checked>
+            <span><strong>Cabrillo log</strong><small>Ready to submit to ARRL, with claimed score</small></span></label>
+          <label class="option"><input type="checkbox" name="outputs" value="summary" checked>
+            <span><strong>Contest summary</strong><small>Score by band: QSOs, QSO points and grids; rover stops and grids activated</small></span></label>
+          <label class="option"><input type="checkbox" name="outputs" value="station_report">
+            <span><strong>Station activity report</strong><small>Every station worked, per band, with best DX</small></span></label>
+          <label class="option" id="comparisonOption"><input type="checkbox" name="outputs" value="comparison">
+            <span><strong>Log comparison</strong><small>Side-by-side comparison of 2&ndash;4 uploaded logs</small></span></label>
+        </div>
+
+        <h3 class="subhead">Maps</h3>
+        <div class="options">
+          <label class="option"><input type="checkbox" name="outputs" value="grid_paths">
+            <span><strong>Path maps</strong><small>A line from your grid to each station worked, labeled with call and km</small></span></label>
+          <label class="option"><input type="checkbox" name="outputs" value="grid_density">
+            <span><strong>Grid maps</strong><small>Worked grid squares, shaded by number of contacts</small></span></label>
+          <label class="option"><input type="checkbox" name="outputs" value="grid_movie" checked>
+            <span><strong>Contest movie</strong><small>Your whole contest replayed as an animated map: follows you from
+              grid to grid, shading each grid you activate, as each contact is drawn in by band, with your running
+              score. Plays in your browser.</small></span></label>
+        </div>
+        <div class="map-extras" id="mapExtras">
+          <label><input type="checkbox" id="mapHtml">
+            <span><strong>Interactive HTML versions</strong> &ndash; hover or tap a station for call, date and grid
+              (open the downloaded <code>.html</code> file in your browser)</span></label>
+          <label><input type="checkbox" id="mapOsm">
+            <span><strong>OpenStreetMap street underlay</strong> &ndash; roads and towns under the maps and movie
+              (adds a few seconds per map)</span></label>
+        </div>
+        <p class="hint">Path and grid maps make one picture per band and per rover stop &ndash; 40 or more for a
+          ten-band rover &ndash; and can take a few minutes. The movie shows everything in one page.</p>
+      </section>
+
+      <div class="actions">
+        <button type="submit" class="btn primary" id="submitBtn">Analyze log</button>
+        <button type="reset" class="btn secondary" id="resetBtn">Start over</button>
+      </div>
+    </form>
+
+    <section id="status" class="card status" hidden aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <span id="statusText">Sending your log&hellip;</span>
+    </section>
+
+    <section id="errorBox" class="card error" hidden role="alert">
+      <h2>Couldn&rsquo;t process that log</h2>
+      <p id="errorText"></p>
+    </section>
+
+    <section id="results" class="card" hidden>
+      <div class="results-head">
+        <h2>Your results</h2>
+        <a id="zipLink" class="btn primary" href="#">Download everything (.zip)</a>
+      </div>
+      <div id="logSummary" class="log-summary"></div>
+      <div id="partialErrors" class="warn" hidden></div>
+      <div id="fileGroups"></div>
+      <details id="notesBox" class="notes" hidden>
+        <summary>Processing notes (scoring breakdown, duplicate check, warnings)</summary>
+        <div id="notes"></div>
+      </details>
+      <p class="hint">Download links expire in 1 hour; files are deleted from the server within a day.</p>
+    </section>
+
+    <section class="card help" id="help">
+      <h2>Log formats</h2>
+      <p><strong>Cabrillo (.log)</strong> &ndash; what N1MM+ and other contest loggers write for ARRL. QSO lines look like
+        <code>QSO: 144 PH 2026-06-13 1802 K2UA/R FN12 W2AAA FN13</code>; a rover&rsquo;s own grid changes from stop to stop.</p>
+      <p><strong>ADIF (.adi)</strong> &ndash; from N1MM+, WSJT-X, LoTW or any logger. It needs <code>CALL</code>,
+        <code>GRIDSQUARE</code>, <code>MY_GRIDSQUARE</code>, <code>BAND</code> (or <code>FREQ</code>), <code>QSO_DATE</code> and
+        <code>TIME_ON</code>. Confirmation fields are ignored &ndash; to map only confirmed contacts, filter the ADIF file in your
+        logger before uploading it.</p>
+      <p><strong>CSV (.csv), or a Google Sheet</strong> &ndash; one row per QSO with the columns
+        <code>date, band, sourcegrid, time, call, grid</code> (bands as 50, 144, 222, 432, 902, 1.2G, 2.3G, &hellip;):</p>
+      <pre>date,band,sourcegrid,time,call,grid
+2026-06-13,144,FN12,1802,W2AAA,FN13
+,432,,1805,W2AAA,FN13
+,,FN13,2210,N2CCC,FN13</pre>
+      <p>Leave <code>date</code>, <code>band</code>, <code>sourcegrid</code> and <code>time</code> blank when they
+        haven&rsquo;t changed since the previous row &ndash; they&rsquo;re filled down automatically.</p>
+      <h2>Contest detection</h2>
+      <p>The contest comes from the log&rsquo;s <code>CONTEST:</code> line (or ADIF <code>CONTEST_ID</code>), or else from its
+        dates: the third or fourth full weekend of January (1900Z Saturday&ndash;0359Z Monday), and the second full weekend of
+        June and of September (1800Z Saturday&ndash;0259Z Monday). ARRL 10 GHz and Up logs are scored too.</p>
+      <h2>Scoring (ARRL Jan/Jun/Sep VHF rules)</h2>
+      <p><strong>QSO points:</strong> 50 and 144 MHz 1; 222 and 432 MHz 2; 902 MHz and 1.2 GHz 3 (4 in January);
+        2.3 GHz and up 4 (8 in January). <strong>Multipliers:</strong> grid squares worked on each band.
+        <strong>Rovers</strong> add one multiplier for each grid they operate from, and every station counts once per band from
+        each grid pair &ndash; so you can work a station again after either of you moves.
+        <strong>Score</strong> = QSO points &times; multipliers. 3-Bands counts 50/144/432 MHz; FM-Only counts FM QSOs on
+        50 MHz&ndash;1.2 GHz; Limited Rover counts the four lowest bands. This is your claimed score &ndash; ARRL&rsquo;s log
+        checking can lower it.</p>
+      <h2>Maps and the movie</h2>
+      <p>Maps are drawn by K2UA&rsquo;s open-source <a href="https://github.com/rusk2ua/grid-mapper" rel="noopener">grid-mapper</a>,
+        one per band and per rover stop. The <strong>contest movie</strong> replays your log in time order: the map follows you
+        from grid to grid, shading each grid you activate, while a line is drawn to every station you work, styled by band,
+        and your score climbs. Use 0.5&times;, 1&times; or 2&times; speed, drag the timeline, switch between the Region, Area and
+        Local zoom levels, tap a band to hide it, or open the table of rover stops. It opens in a new browser tab (phones too);
+        the &ldquo;Download everything&rdquo; .zip keeps a copy that plays offline.
+        Coastline and border data: <a href="https://www.naturalearthdata.com/" rel="noopener">Natural Earth</a>;
+        street underlay: &copy; <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap</a> contributors.</p>
+      <p>Working the ARRL 10 GHz and Up Contest? Its own site,
+        <a href="https://10ghz.microwavedx.com/">10ghz.microwavedx.com</a>, adds weekend, comprehensive and directional analysis.</p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>
+      Runs the open-source <a href="https://github.com/rusk2ua/10ghz-log-analyzer" rel="noopener">10ghz-log-analyzer</a>
+      <span id="upstreamVersion"></span> and
+      <a href="https://github.com/rusk2ua/grid-mapper" rel="noopener">grid-mapper</a>
+      <span id="gridMapperVersion"></span> by K2UA &middot;
+      <a href="https://github.com/rusk2ua/10ghz-web-logger-analyzer" rel="noopener">Source &amp; issues</a> &middot;
+      <a href="https://10ghz.microwavedx.com/">10 GHz and Up site</a> &middot;
+      Not affiliated with the ARRL. Your logs are used only to generate your results.
+    </p>
+    <p class="footer-tagline">
+      Website and associated code repositories provided as a service to the Amateur Radio microwave community
+      by Rus Healy, K2UA. Please share with your club and your friends and remember that mentoring new hams is
+      the future of our hobby!
+    </p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
