@@ -1,5 +1,5 @@
 repository: https://github.com/rusk2ua/grid-mapper.git
-ref: main
-commit: 6c8903970c8ff68bd252dbff7693d80210b7b736
-version: v1.7.0
-synced: 2026-11-06T21:09:51Z
+ref: claude/admiring-hamilton-n33dcf
+commit: d737c5f87ff92c9219cb1a36d581dd729892f0e3
+version: v1.7.1
+synced: 2026-11-07T12:01:23Z

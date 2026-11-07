@@ -131,7 +131,9 @@ def test_map_options_become_grid_mapper_switches(call_api, monkeypatch):
     call_api({"files": [CABRILLO], "outputs": ["grid_density"], "mapOsm": True})
     call_api({"files": [CABRILLO], "outputs": ["grid_paths"], "mapHtml": True})
     call_api({"files": [CABRILLO], "outputs": ["grid_movie"], "mapHtml": True, "mapOsm": True})
-    assert calls == [["--osm-basemap"], ["--paths", "--html"], ["--animate-only", "--osm-basemap"]]
+    credit = ["--credit", "Created using 10ghz.microwavedx.com by K2UA"]
+    assert calls == [["--osm-basemap"] + credit, ["--paths", "--html"] + credit,
+                     ["--animate-only", "--osm-basemap"] + credit]
 
 
 def test_map_usage_is_recorded(call_api, output_dir):

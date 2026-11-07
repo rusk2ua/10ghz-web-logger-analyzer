@@ -127,3 +127,47 @@ def test_rover_call_from_the_form_names_csv_outputs(call_api):
     status, body = call_api({"files": [log], "callsign": "K2UA/R", "outputs": ["station_report"]})
     assert status == 200, body
     assert body["files"][0]["name"].startswith("K2UA-R_Station_Report_")
+
+
+# ------------------------------------------------------------------ credit line
+
+def _png_credit(path):
+    from PIL import Image
+    with Image.open(path) as im:
+        return im.info.get("Comment")
+
+
+@pytest.mark.parametrize("site, host", [("vhf", "vhf.microwavedx.com"), ("10ghz", "10ghz.microwavedx.com")])
+def test_images_and_html_carry_the_site_credit(call_api, output_dir, monkeypatch, site, host):
+    import runner
+    monkeypatch.setattr(runner, "SITE_MODE", site)
+    monkeypatch.setattr(runner._module("maidenhead_map"), "_animation_background", lambda *a, **k: {})
+    credit = f"Created using {host} by K2UA"
+    outputs = ["grid_paths", "grid_movie"] + (["directional_viz"] if site == "10ghz" else [])
+    status, body = call_api({"files": [TEN_GHZ], "outputs": outputs, "mapHtml": True})
+    assert status == 200, body
+    pngs = [f for f in body["files"] if f["kind"] == "image"]
+    htmls = [f for f in body["files"] if f["kind"] in ("html", "movie")]
+    assert pngs and htmls and any(f["kind"] == "movie" for f in htmls)
+    for f in pngs:
+        assert _png_credit(local_file(output_dir, f)) == credit, f["name"]
+    for f in htmls:
+        page = local_file(output_dir, f).read_text(encoding="utf-8")
+        data = json.loads(__import__("re").search(r"const DATA = (.*?);\n", page).group(1))
+        assert data["credit"] == credit, f["name"]
+
+
+def test_credit_strip_is_added_once(tmp_path):
+    import matplotlib.pyplot as plt
+    import runner
+    from PIL import Image
+    path = tmp_path / "plot.png"
+    plt.figure(figsize=(4, 3)).savefig(path, dpi=100)
+    plt.close("all")
+    with Image.open(path) as im:
+        size = im.size
+    assert runner.credit_png(str(path), "Created using example.com by N0CALL") is True
+    assert runner.credit_png(str(path), "Created using example.com by N0CALL") is False
+    with Image.open(path) as im:
+        assert im.size[0] == size[0] and im.size[1] > size[1]
+        assert im.info["Comment"] == "Created using example.com by N0CALL"

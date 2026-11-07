@@ -27,11 +27,11 @@ Anyone can upload a contest log (Cabrillo, ADIF or CSV) or paste a Google Sheets
 
 The web app runs both CLI projects' own scripts, vendored unmodified, so its scores,
 reports and maps are identical to the command-line versions. Currently vendored:
-10ghz-log-analyzer **v1.7.0** and grid-mapper **v1.7.0** (see `UPSTREAM.txt` in
+10ghz-log-analyzer **v1.7.0** and grid-mapper **v1.7.1** (see `UPSTREAM.txt` in
 `backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.5.1**. See the [version history](#version-history).
+**v2.5.2**. See the [version history](#version-history).
 
 ## The VHF site
 
@@ -385,6 +385,17 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
   result.
 
 ## Version history
+
+### v2.5.2 (2026-11-07): a credit line on every image and HTML page
+
+- Every image and HTML page the site makes now says **Created using
+  vhf.microwavedx.com by K2UA** (or 10ghz.microwavedx.com on the 10 GHz site):
+  - **Images** (path and grid maps, directional plots): a thin strip below the picture,
+    small grey type at the right, so it never covers the map or plot. The same text is
+    in the PNG's `Software` and `Comment` metadata.
+  - **The contest movie and the interactive maps:** in the map attribution corner,
+    after "Leaflet | Natural Earth" (grid-mapper v1.7.1's new `--credit`).
+- Text files, Cabrillo logs and the .zip are unchanged for now.
 
 ### v2.5.1 (2026-11-07): a cost tag per site
 

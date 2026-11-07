@@ -856,6 +856,7 @@ const DATA = __DATA_JSON__;
 
   // OpenStreetMap's tile servers refuse requests without a Referer, which a
   // page opened from a saved file never sends: they'd draw "Access blocked".
+  if (DATA.credit) map.attributionControl.addAttribution(DATA.credit);
   if (DATA.osm && location.protocol === 'file:') {
     map.attributionControl.addAttribution('Street underlay shows when this map is opened from a website');
   } else if (DATA.osm) {
@@ -937,9 +938,23 @@ const DATA = __DATA_JSON__;
 </html>
 """
 
+# An optional credit line (e.g. "Created using example.com by N0CALL") shown in
+# the map attribution corner of every --html map and --animate movie; set by
+# --credit, or by a program using this module with set_html_credit().
+_HTML_CREDIT = None
+
+
+def set_html_credit(text):
+    """Credit line for the HTML pages this module writes (None for none)."""
+    global _HTML_CREDIT
+    _HTML_CREDIT = str(text).strip() or None if text else None
+
+
 def _write_leaflet_html(data, output_file, page_title):
     """Render one interactive Leaflet map page from a data dict built by
     create_grid_map_html/create_path_map_html."""
+    if _HTML_CREDIT and 'credit' not in data:
+        data = dict(data, credit=_esc(_HTML_CREDIT))
     out = _LEAFLET_PAGE_TEMPLATE.replace('__TITLE__', _esc(page_title))
     out = out.replace('__TITLEBAR__', _esc(data.get('title', page_title)).replace('\n', '<br>'))
     # Escape <, > and & so nothing in the log (a callsign, say) can end the script block.
@@ -2161,6 +2176,7 @@ const DATA = __DATA_JSON__;
   });
   map.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>');
   map.attributionControl.addAttribution('Natural Earth');
+  if (D.credit) map.attributionControl.addAttribution(D.credit);
   var canvas = L.canvas({ padding: 0.6 });
   var zoomKey = 'area';
   map.setView([S[0].lat, S[0].lon], D.zooms[zoomKey]);
@@ -2699,6 +2715,7 @@ def create_animation_html(qso_records_by_band, callsign, fallback_home_grid=None
     data['background'] = _animation_background(lat_min - pad_lat, lat_max + pad_lat,
                                                lon_min - pad_lon, lon_max + pad_lon, tolerance=0.006)
     data['osm'] = {'opacity': osm_opacity} if osm_basemap else None
+    data['credit'] = _esc(_HTML_CREDIT) if _HTML_CREDIT else None
 
     year = datetime(1970, 1, 1) + timedelta(minutes=data['events'][0]['utc'])
     contest_title = _CONTEST_TITLES.get((contest or '').upper(), (contest or '').replace('-', ' ').strip())
@@ -2749,6 +2766,9 @@ def main():
                             'time and fails quietly (map still generates) if the tiles can\'t be fetched.')
     parser.add_argument('--osm-opacity', type=float, default=0.3, metavar='0.0-1.0',
                        help='Opacity of the --osm-basemap underlay (default: 0.3, i.e. 30%%).')
+    parser.add_argument('--credit', metavar='TEXT',
+                        help='A credit line for the map attribution corner of the --html maps and the '
+                             '--animate movie, e.g. "Created using example.com by N0CALL".')
     parser.add_argument('--html', action='store_true',
                        help='Also generate an interactive HTML version of every map produced in this '
                             'run (density maps, and path maps when --paths is used), suitable for '
@@ -2775,6 +2795,7 @@ def main():
         sys.exit(1)
 
     args = parser.parse_args()
+    set_html_credit(args.credit)
     filename = args.filename
 
     if not 0.0 <= args.osm_opacity <= 1.0:
