@@ -304,6 +304,7 @@ def process(req, store, workdir, record):
                     "kind": _file_kind(name),
                     "size": os.path.getsize(path),
                     "url": store.save(path, prefix + name),
+                    "downloadUrl": store.download_url(prefix + name),
                 })
         if notes:
             archive.writestr("Processing_Notes.txt", "\n\n".join(

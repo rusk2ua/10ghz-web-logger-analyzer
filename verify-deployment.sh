@@ -115,6 +115,14 @@ if disposition.lower().startswith("attachment") or not ctype.lower().startswith(
     sys.exit(f"FAIL the contest movie would download instead of playing "
              f"(Content-Type {ctype!r}, Content-Disposition {disposition!r})")
 print(f"OK   contest movie opens in the browser ({len(page) // 1024} KB)")
+# ...and its Download link must save it instead.
+if not movie.get("downloadUrl"):
+    sys.exit("FAIL the results have no download links (downloadUrl)")
+with urlopen(urllib.parse.urljoin(url + "/", movie["downloadUrl"])) as resp:
+    disposition = resp.headers.get("Content-Disposition") or ""
+if not disposition.lower().startswith("attachment"):
+    sys.exit(f"FAIL the movie's Download link wouldn't save it (Content-Disposition {disposition!r})")
+print("OK   Download links save the file")
 if vhf:
     if b'"total":9890' not in page:
         sys.exit("FAIL the movie's score for the sample rover log isn't 9,890")

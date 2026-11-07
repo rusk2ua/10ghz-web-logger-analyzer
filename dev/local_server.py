@@ -27,6 +27,7 @@ OUTPUT = os.environ["LOCAL_OUTPUT_DIR"]
 sys.path.insert(0, os.path.join(ROOT, "backend", "app"))
 
 import handler  # noqa: E402
+import storage  # noqa: E402
 import usage  # noqa: E402
 
 
@@ -49,6 +50,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._lambda(path, "GET", "")
         else:
             super().do_GET()
+
+    def end_headers(self):
+        # Like the deployed site: images and maps open in the tab, the rest
+        # (and any ?download=1 link) saves.
+        path, _, query = self.path.partition("?")
+        if path.startswith("/output/"):
+            name = storage.safe_download_name(os.path.basename(path))
+            disposition = (storage.attachment(name) if "download=1" in query.split("&")
+                           else storage.content_disposition(name))
+            self.send_header("Content-Disposition", disposition)
+        super().end_headers()
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
