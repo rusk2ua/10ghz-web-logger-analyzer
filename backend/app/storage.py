@@ -28,12 +28,19 @@ def safe_download_name(name):
     return re.sub(r"[^A-Za-z0-9._-]", "_", name) or "download"
 
 
+INLINE_EXTENSIONS = (".png", ".html")
+
+
 def content_disposition(name):
-    """Download most files, but show the contest movie in the browser tab:
-    it's a page meant to be watched, and on a phone a downloaded .html file
-    opens in a preview that doesn't run it. name must already be safe."""
-    kind = "inline" if name.endswith("_contest_animation.html") else "attachment"
+    """Show images, maps and the contest movie in the browser tab (on a phone
+    a downloaded .html file opens in a preview that doesn't run it); download
+    everything else. name must already be safe."""
+    kind = "inline" if name.lower().endswith(INLINE_EXTENSIONS) else "attachment"
     return f'{kind}; filename="{name}"'
+
+
+def attachment(name):
+    return f'attachment; filename="{safe_download_name(name)}"'
 
 
 def content_type(name):
@@ -68,6 +75,14 @@ class S3Storage:
             "get_object", Params={"Bucket": self.bucket, "Key": key}, ExpiresIn=self.ttl
         )
 
+    def download_url(self, key):
+        """A link that saves the file even where it normally opens in the tab
+        (the download attribute is ignored on links to another site)."""
+        name = os.path.basename(key)
+        return self.s3.generate_presigned_url(
+            "get_object", ExpiresIn=self.ttl,
+            Params={"Bucket": self.bucket, "Key": key, "ResponseContentDisposition": attachment(name)})
+
     def put_json(self, key, obj):
         self.s3.put_object(Bucket=self.bucket, Key=key, Body=json.dumps(obj).encode(),
                            ContentType="application/json")
@@ -93,6 +108,9 @@ class LocalStorage:
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copyfile(local_path, dest)
         return self.url_prefix + key
+
+    def download_url(self, key):
+        return self.url_prefix + key + "?download=1"  # dev/local_server.py honours it
 
     def put_json(self, key, obj):
         dest = os.path.join(self.root, key)

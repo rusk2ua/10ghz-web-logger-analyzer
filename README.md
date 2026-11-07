@@ -31,7 +31,7 @@ reports and maps are identical to the command-line versions. Currently vendored:
 `backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.5.2**. See the [version history](#version-history).
+**v2.6.0**. See the [version history](#version-history).
 
 ## The VHF site
 
@@ -369,8 +369,9 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
 **2. Poll:** `GET /api/jobs/{jobId}` returns `{"state": "queued" | "running" | "done" | "error"}`.
 
 - **`done`:** includes `result`, which lists each log's call sign, QSO count and bands, then
-  download URLs for every generated file, a .zip, the processing notes, and any per-output
-  errors.
+  URLs for every generated file, a .zip, the processing notes, and any per-output errors.
+  Each file has a `url` (images and HTML maps open in the browser tab; everything else
+  downloads) and a `downloadUrl` that always saves the file.
 - **`error`:** includes a readable `message`. That covers problems found while running, such as
   a log with no QSOs, and jobs that never finished.
 
@@ -385,6 +386,24 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
   result.
 
 ## Version history
+
+### v2.6.0 (2026-11-07): view maps and plots in the browser
+
+- **Images and interactive maps open in a new tab** when you click them, instead of
+  downloading. Each one has its own **Download** link. Text reports, Cabrillo logs and the
+  .zip still download.
+- **View all maps & plots:** a full-screen viewer on the results page shows the images one at
+  a time, with a "3 of 30" counter and the output, log and file name above each one.
+  - Move with the arrows, the arrow keys or a swipe on a phone. Esc or ✕ closes it.
+  - **Open in tab** and **Download** buttons for the image on screen.
+  - The next and previous images load in the background, so moving through them is instant.
+- There's no "open everything in tabs" button. Browsers allow one new tab per click, and
+  phones are stricter still, so it would open one tab and silently drop the rest.
+- How it works: PNG and HTML files are stored with `Content-Disposition: inline`. Each file
+  also gets a second 1-hour link, presigned with `response-content-disposition=attachment`,
+  because a link's `download` attribute is ignored on links to another site (the results
+  bucket). `./verify-deployment.sh` checks that the Download link really saves the file.
+  `dev/local_server.py` behaves the same way (`?download=1`).
 
 ### v2.5.2 (2026-11-07): a credit line on every image and HTML page
 

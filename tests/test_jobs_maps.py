@@ -210,12 +210,30 @@ def test_contest_movie_from_csv(call_api, output_dir, no_background):
     assert [d["label"] for d in data["days"]] == ["Sat Aug 15", "Sun Aug 16"]
 
 
-def test_movie_plays_in_the_browser_other_files_download():
+def test_images_and_maps_open_in_the_browser_other_files_download():
     import storage
     assert storage.content_disposition("K2UA_contest_animation.html") == \
         'inline; filename="K2UA_contest_animation.html"'
-    for name in ("K2UA_ARRL_10GHZ.log", "K2UA_10G_FN32KP_northeastern_grid_paths_map.html", "x.png"):
+    for name in ("K2UA_10G_FN32KP_northeastern_grid_paths_map.html", "x.png", "Y.PNG"):
+        assert storage.content_disposition(name).startswith("inline; ")
+    for name in ("K2UA_ARRL_10GHZ.log", "K2UA_ARRL_10GHZ_Summary.txt", "K2UA_10GHz_results.zip"):
         assert storage.content_disposition(name).startswith("attachment; ")
+
+
+def test_every_file_has_a_download_link(call_api):
+    status, body = call_api({"files": [CABRILLO], "outputs": ["summary", "grid_paths"], "mapHtml": True})
+    assert status == 200, body
+    for f in body["files"]:
+        assert f["downloadUrl"] == f["url"] + "?download=1"
+
+
+def test_s3_download_link_forces_a_save(monkeypatch):
+    import storage
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    monkeypatch.setenv("AWS_REGION", "us-east-2")
+    url = storage.S3Storage("example-bucket").download_url("results/abc/K2UA_map.png")
+    assert "response-content-disposition=attachment%3B%20filename%3D%22K2UA_map.png%22" in url
 
 
 def test_movie_usage_counts_as_a_map_analysis(call_api, output_dir, no_background):

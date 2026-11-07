@@ -101,7 +101,7 @@
         <div class="map-extras" id="mapExtras">
           <label><input type="checkbox" id="mapHtml">
             <span><strong>Interactive HTML versions</strong> &ndash; hover or tap a station for call, date and grid
-              (open the downloaded <code>.html</code> file in your browser)</span></label>
+              (they open in a new browser tab)</span></label>
           <label><input type="checkbox" id="mapOsm">
             <span><strong>OpenStreetMap street underlay</strong> &ndash; roads and towns under the maps and movie
               (adds a few seconds per map)</span></label>
@@ -129,7 +129,10 @@
     <section id="results" class="card" hidden>
       <div class="results-head">
         <h2>Your results</h2>
-        <a id="zipLink" class="btn primary" href="#">Download everything (.zip)</a>
+        <div class="results-actions">
+          <button id="viewAllBtn" type="button" class="btn secondary" hidden>View all maps &amp; plots</button>
+          <a id="zipLink" class="btn primary" href="#">Download everything (.zip)</a>
+        </div>
       </div>
       <div id="logSummary" class="log-summary"></div>
       <div id="partialErrors" class="warn" hidden></div>
@@ -138,7 +141,7 @@
         <summary>Processing notes (scoring breakdown, duplicate check, warnings)</summary>
         <div id="notes"></div>
       </details>
-      <p class="hint">Download links expire in 1 hour; files are deleted from the server within a day.</p>
+      <p class="hint">Click a map or plot to open it in a new tab, or use View all to page through them. Links expire in 1 hour; files are deleted from the server within a day.</p>
     </section>
 
     <section class="card help" id="help">

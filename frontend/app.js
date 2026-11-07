@@ -291,6 +291,11 @@
     });
     // A group can mix images (thumbnails) and downloads, e.g. maps + their HTML versions.
     const multi = data.logs.length > 1;
+    const allImages = data.files.filter((f) => f.kind === 'image');
+    viewer.setImages(allImages, multi);
+    const viewAll = $('viewAllBtn');
+    show(viewAll, allImages.length > 0);
+    viewAll.textContent = allImages.length > 1 ? `View all ${allImages.length} maps & plots` : 'View map';
     $('fileGroups').replaceChildren(...[...groups].map(([label, files]) => {
       const images = files.filter((f) => f.kind === 'image');
       const others = files.filter((f) => f.kind !== 'image');
@@ -315,21 +320,108 @@
     $('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  // A link that saves the file. Images and maps open in the tab by default;
+  // the download attribute alone doesn't help (it's ignored on links to the
+  // results bucket, another site), so the server gives each file a second URL.
+  function downloadLink(file, text) {
+    return el('a', { class: 'dl-link', href: file.downloadUrl || file.url, download: file.name,
+      'aria-label': `Download ${file.name}`, text: text || 'Download' });
+  }
+
   function renderFile(file, multiSource) {
     const caption = file.name + (multiSource ? ` (${file.source})` : '');
     if (file.kind === 'image') {
-      return el('a', { class: 'thumb', href: file.url, target: '_blank', rel: 'noopener' },
-        el('img', { src: file.url, alt: file.name, loading: 'lazy' }),
-        el('span', { text: caption }));
+      return el('figure', { class: 'thumb' },
+        el('a', { href: file.url, target: '_blank', rel: 'noopener', title: 'Open in a new tab' },
+          el('img', { src: file.url, alt: file.name, loading: 'lazy' })),
+        el('figcaption', {}, el('span', { text: caption }), downloadLink(file)));
     }
-    if (file.kind === 'movie') {
-      return el('a', { class: 'download movie', href: file.url, target: '_blank', rel: 'noopener' },
-        el('span', { text: `▶ Watch ${caption}` }), el('small', { text: `${formatSize(file.size)} · opens in a new tab` }));
+    if (file.kind === 'movie' || file.kind === 'html') {
+      const movie = file.kind === 'movie';
+      return el('div', { class: 'download' + (movie ? ' movie' : '') },
+        el('a', { class: 'open-link', href: file.url, target: '_blank', rel: 'noopener' },
+          el('span', { text: movie ? `▶ Watch ${caption}` : caption })),
+        el('small', {}, `${formatSize(file.size)} · ${movie ? 'contest movie' : 'interactive map'} · opens in a new tab · `,
+          downloadLink(file)));
     }
-    const size = formatSize(file.size) + (file.kind === 'html' ? ' · interactive map' : '');
     return el('a', { class: 'download', href: file.url, download: file.name },
-      el('span', { text: caption }), el('small', { text: size }));
+      el('span', { text: caption }), el('small', { text: formatSize(file.size) }));
   }
+
+  // ------------------------------------------------------------ image viewer
+  // Full-screen, one map or plot at a time: arrows, arrow keys or a swipe to
+  // move, Esc or x to close. Opening every image in its own tab isn't
+  // dependable - browsers allow one new tab per click, and phones fewer.
+  const viewer = (function () {
+    let images = [];
+    let multi = false;
+    let index = 0;
+    const img = el('img', { class: 'viewer-img', alt: '' });
+    const count = el('span', { class: 'viewer-count' });
+    const caption = el('span', { class: 'viewer-caption' });
+    const openTab = el('a', { class: 'viewer-btn', target: '_blank', rel: 'noopener', text: 'Open in tab' });
+    const download = el('a', { class: 'viewer-btn', text: 'Download' });
+    const close = el('button', { type: 'button', class: 'viewer-btn viewer-close', 'aria-label': 'Close', text: '✕' });
+    const prev = el('button', { type: 'button', class: 'viewer-nav prev', 'aria-label': 'Previous', text: '‹' });
+    const next = el('button', { type: 'button', class: 'viewer-nav next', 'aria-label': 'Next', text: '›' });
+    const dialog = el('dialog', { class: 'viewer', 'aria-label': 'Maps and plots' },
+      el('div', { class: 'viewer-bar' },
+        el('div', { class: 'viewer-title' }, count, caption),
+        el('div', { class: 'viewer-actions' }, openTab, download, close)),
+      el('div', { class: 'viewer-stage' }, img, prev, next));
+    document.body.append(dialog);
+
+    function go(i) {
+      if (!images.length) return;
+      index = (i + images.length) % images.length;
+      const f = images[index];
+      img.src = f.url;
+      img.alt = f.name;
+      count.textContent = images.length > 1 ? `${index + 1} of ${images.length}` : '';
+      caption.textContent = `${f.label}${multi ? ` · ${f.source}` : ''} · ${f.name}`;
+      openTab.href = f.url;
+      download.href = f.downloadUrl || f.url;
+      download.setAttribute('download', f.name);
+      [prev, next].forEach((b) => { b.hidden = images.length < 2; });
+      // Fetch the neighbours now, so the next swipe is instant.
+      [index + 1, index - 1].forEach((j) => { new Image().src = images[(j + images.length) % images.length].url; });
+    }
+
+    prev.addEventListener('click', () => go(index - 1));
+    next.addEventListener('click', () => go(index + 1));
+    close.addEventListener('click', () => dialog.close());
+    dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
+    dialog.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft') { e.preventDefault(); go(index - 1); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); go(index + 1); }
+    });
+    dialog.addEventListener('close', () => document.body.classList.remove('viewer-open'));
+    let touchX = null;
+    let touchY = null;
+    img.addEventListener('touchstart', (e) => {
+      touchX = e.changedTouches[0].clientX;
+      touchY = e.changedTouches[0].clientY;
+    }, { passive: true });
+    img.addEventListener('touchend', (e) => {
+      if (touchX === null || e.changedTouches.length !== 1) return;
+      const dx = e.changedTouches[0].clientX - touchX;
+      const dy = e.changedTouches[0].clientY - touchY;
+      touchX = null;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > 1.5 * Math.abs(dy)) go(index + (dx < 0 ? 1 : -1));
+    });
+
+    return {
+      setImages(list, multiSource) { images = list; multi = multiSource; index = 0; },
+      open(i) {
+        if (!images.length) return;
+        go(i || 0);
+        document.body.classList.add('viewer-open');
+        dialog.showModal();
+        close.focus();
+      },
+    };
+  }());
+  $('viewAllBtn').addEventListener('click', () => viewer.open(0));
 
   updateComparisonOption();
   updateMapExtras();
