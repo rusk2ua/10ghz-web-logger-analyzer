@@ -7,6 +7,8 @@
 # Optional settings (environment variables):
 #   SITE_MODE=vhf                       the VHF contests site (home page vhf.html) instead of
 #                                       the 10 GHz and Up site; give it its own STACK_NAME
+#   APP_TAG=arrl-vhf-web                value of the "app" cost tag the app budget tracks
+#                                       (default: arrl-10ghz-web, or arrl-vhf-web for SITE_MODE=vhf)
 #   DOMAIN_NAME=10ghz.microwavedx.com   custom host name (needs a Route 53 hosted zone)
 #   ALT_DOMAIN_NAME=www.microwavedx.com second host name on the same certificate
 #   HOSTED_ZONE_ID=Z0123...             skip the automatic hosted-zone lookup
@@ -53,7 +55,15 @@ esac
 if [[ "${SITE_MODE:-10ghz}" == vhf && "$STACK_NAME" == arrl-10ghz-web ]]; then
   fail "SITE_MODE=vhf needs its own stack -- set STACK_NAME (e.g. STACK_NAME=arrl-vhf-web)."
 fi
-say "Deploying stack '$STACK_NAME' (${SITE_MODE:-10ghz} site) to account $ACCOUNT in $REGION"
+# ------------------------------------------------------------------ cost tag
+# Each site gets its own value of the "app" cost allocation tag, so each app
+# budget (and Cost Explorer) sees that site's spend alone.
+if [[ -z "${APP_TAG:-}" ]]; then
+  if [[ "${SITE_MODE:-10ghz}" == vhf ]]; then APP_TAG=arrl-vhf-web; else APP_TAG=arrl-10ghz-web; fi
+fi
+[[ "$APP_TAG" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || fail "APP_TAG may use only letters, digits, '.', '_' and '-' (got '$APP_TAG')."
+# ------------------------------------------------------------------ end cost tag
+say "Deploying stack '$STACK_NAME' (${SITE_MODE:-10ghz} site, cost tag app=$APP_TAG) to account $ACCOUNT in $REGION"
 
 # ------------------------------------------------------------------ alert email
 # The alert address is part of the two budgets. Changing it makes CloudFormation
@@ -110,8 +120,9 @@ if [[ -n "${DOMAIN_NAME:-}" ]]; then
       --stack-name "$CERT_STACK_NAME" \
       --template-file certificate.yaml \
       --no-fail-on-empty-changeset \
-      --tags app=arrl-10ghz-web \
+      --tags "app=$APP_TAG" \
       --parameter-overrides \
+        "AppTag=$APP_TAG" \
         "DomainName=$DOMAIN_NAME" \
         "AlternateDomainName=${ALT_DOMAIN_NAME:-}" \
         "HostedZoneId=$HOSTED_ZONE_ID"
@@ -142,6 +153,7 @@ sam build
 say "Deploying the CloudFormation stack"
 params=(
   "SiteMode=${SITE_MODE:-10ghz}"
+  "AppTag=$APP_TAG"
   "ReservedConcurrency=$RESERVED_CONCURRENCY"
   "AppBudgetUsd=${APP_BUDGET_USD:-5}"
   "MonthlyBudgetUsd=${MONTHLY_BUDGET_USD:-10}"
@@ -149,7 +161,10 @@ params=(
 [[ -n "${DOMAIN_NAME:-}" ]]     && params+=("DomainName=$DOMAIN_NAME" "CertificateArn=$CERT_ARN" "HostedZoneId=$HOSTED_ZONE_ID")
 [[ -n "${ALT_DOMAIN_NAME:-}" ]] && params+=("AlternateDomainName=$ALT_DOMAIN_NAME")
 [[ -n "${ALERT_EMAIL:-}" ]]     && params+=("AlertEmail=$ALERT_EMAIL")
-sam deploy --stack-name "$STACK_NAME" --region "$REGION" --parameter-overrides "${params[@]}"
+# --tags replaces samconfig.toml's default tags; CloudFormation copies stack
+# tags onto every resource that takes them.
+sam deploy --stack-name "$STACK_NAME" --region "$REGION" --tags "app=$APP_TAG" \
+  --parameter-overrides "${params[@]}"
 
 output() {
   aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK_NAME" \
@@ -187,13 +202,13 @@ tidy_images() {
     --lifecycle-policy-text "{\"rules\":[{\"rulePriority\":1,\"description\":\"Keep the newest $keep images\",\"selection\":{\"tagStatus\":\"any\",\"countType\":\"imageCountMoreThan\",\"countNumber\":$keep},\"action\":{\"type\":\"expire\"}}]}" \
     >/dev/null || return 1
   aws ecr tag-resource --region "$REGION" --resource-arn "$repo_arn" \
-    --tags Key=app,Value=arrl-10ghz-web || return 1
+    --tags "Key=app,Value=$APP_TAG" || return 1
   echo "    $repo: keeping the newest $keep images"
 }
 say "Tidying the Lambda image repository"
 tidy_images || echo "WARNING: couldn't set the image cleanup rule; the site is deployed, rerun ./deploy.sh later."
 
-# The app budget filters on the app=arrl-10ghz-web tag, which only works once
+# The app budget filters on the app=$APP_TAG tag, which only works once
 # "app" is an active cost allocation tag. AWS can take up to 24 hours after the
 # first deploy to discover a new tag, so this may need a later rerun.
 if aws ce update-cost-allocation-tags-status --region us-east-1 \

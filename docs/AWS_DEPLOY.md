@@ -183,7 +183,8 @@ already has. If you pass a different one it stops before building anything, beca
 the address makes CloudFormation replace the budgets, and it can't (they have fixed names).
 That includes the same Gmail address written with different dots: CloudFormation compares the text.
 
-The app budget only counts resources tagged `app=arrl-10ghz-web`, so `deploy.sh` also
+The app budget only counts resources tagged with the site's cost tag (`app=arrl-10ghz-web`,
+or `app=arrl-vhf-web` for the VHF site), so `deploy.sh` also
 activates `app` as a cost allocation tag. On a first deploy AWS may not have discovered the
 tag yet. If so, `deploy.sh` prints a NOTE; rerun it the next day, or activate the tag under
 Billing → Cost allocation tags.
