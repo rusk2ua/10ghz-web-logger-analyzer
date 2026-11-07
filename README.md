@@ -31,7 +31,7 @@ reports and maps are identical to the command-line versions. Currently vendored:
 `backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.5.0**. See the [version history](#version-history).
+**v2.5.1**. See the [version history](#version-history).
 
 ## The VHF site
 
@@ -56,8 +56,9 @@ SITE_MODE=vhf STACK_NAME=arrl-vhf-web DOMAIN_NAME=vhf.microwavedx.com ./deploy.s
 STACK_NAME=arrl-vhf-web ./verify-deployment.sh
 ```
 
-It gets its own certificate, buckets, rate limits, budgets and usage dashboard. Run it
-locally with `SITE_MODE=vhf python dev/local_server.py`.
+It gets its own certificate, buckets, rate limits, budgets and usage dashboard, and its
+own cost tag (`app=arrl-vhf-web`), so its app budget and Cost Explorer show the VHF site's
+spend alone. Run it locally with `SITE_MODE=vhf python dev/local_server.py`.
 
 ## Architecture
 
@@ -218,6 +219,7 @@ All are optional environment variables for `deploy.sh`:
 | `MONTHLY_BUDGET_USD` | 10 | Whole-account safety-net budget |
 | `RESERVED_CONCURRENCY` | 3, or 0 on small accounts | Max simultaneous Lambda runs |
 | `KEEP_IMAGES` | 3 | Lambda image versions kept in ECR |
+| `APP_TAG` | arrl-10ghz-web, or arrl-vhf-web with `SITE_MODE=vhf` | Value of the `app` cost tag on the stack's resources; the app budget counts only those |
 | `AWS_REGION` / `STACK_NAME` | us-east-2 / arrl-10ghz-web | Where to deploy |
 
 API rate limits (1 request/s, burst 2) and result retention (1 day) are template
@@ -232,7 +234,8 @@ parameters. Change them in `template.yaml` or with `sam deploy --parameter-overr
   any; `deploy.sh` detects that and tells you.
 - Uploads are limited to 4 logs of 1 MB each; Google Sheets downloads to 2 MB.
 - With `ALERT_EMAIL` set, two AWS Budgets alerts:
-  - **App budget ($5/month):** covers only resources tagged `app=arrl-10ghz-web`, and emails
+  - **App budget ($5/month):** covers only resources tagged with the site's own cost tag
+    (`app=arrl-10ghz-web` or `app=arrl-vhf-web`), and emails
     when actual or forecast spend goes over $5. `deploy.sh` activates the `app` cost
     allocation tag it depends on. AWS may take up to 24 hours to discover a new tag, so a
     first deploy may need a rerun the next day.
@@ -382,6 +385,15 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
   result.
 
 ## Version history
+
+### v2.5.1 (2026-11-07): a cost tag per site
+
+- The VHF stack now tags its resources `app=arrl-vhf-web` (the 10 GHz stack keeps
+  `app=arrl-10ghz-web`), and each stack's app budget filters on its own tag, so each budget
+  and Cost Explorer show one site's spend. `deploy.sh` picks the tag from `SITE_MODE`
+  (override with `APP_TAG`) and applies it to the stack, its certificate stack and its ECR
+  image repository. The budget filter updates in place.
+- Template parameter `AppTag` in `template.yaml` and `certificate.yaml`.
 
 ### v2.5.0 (2026-11-06): the VHF site, ADIF logs and rover call signs
 

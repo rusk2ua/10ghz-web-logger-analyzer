@@ -61,13 +61,22 @@ Parameters:
     Type: String
     Default: ''
     Description: Optional email address for the monthly budget alerts (app and account).
+  AppTag:
+    Type: String
+    Default: arrl-10ghz-web
+    AllowedPattern: '^[A-Za-z0-9._-]{1,64}$'
+    Description: >
+      Value of the "app" cost allocation tag on this stack's resources, which
+      the app budget filters on. deploy.sh tags the stack with app=<AppTag> and
+      passes the same value here: arrl-10ghz-web for the 10 GHz site,
+      arrl-vhf-web for the VHF site, so each site's costs are tracked apart.
   AppBudgetUsd:
     Type: Number
     Default: 5
     MinValue: 1
     Description: >
       Monthly budget (USD) for this app alone -- resources tagged
-      app=arrl-10ghz-web. Emails when actual or forecast spend exceeds it.
+      app=<AppTag>. Emails when actual or forecast spend exceeds it.
       Requires the "app" cost allocation tag to be active (deploy.sh activates it).
   MonthlyBudgetUsd:
     Type: Number
@@ -416,7 +425,8 @@ Resources:
             HostedZoneId: Z2FDTNDATAQYW2  # fixed hosted zone ID for all CloudFront distributions
 
   # ---------------------------------------------------------------- cost guard
-  # Cost of this app only, via its app=arrl-10ghz-web tag.
+  # Cost of this site only, via its app=<AppTag> tag. (Changing the filter
+  # updates the budget in place; only a change to the notifications replaces it.)
   AppBudget:
     Type: AWS::Budgets::Budget
     Condition: HasAlertEmail
@@ -427,7 +437,7 @@ Resources:
         TimeUnit: MONTHLY
         BudgetLimit: {Amount: !Ref AppBudgetUsd, Unit: USD}
         CostFilters:
-          TagKeyValue: ['user:app$arrl-10ghz-web']
+          TagKeyValue: [!Sub 'user:app$${AppTag}']
       NotificationsWithSubscribers:
         - Notification:
             NotificationType: ACTUAL

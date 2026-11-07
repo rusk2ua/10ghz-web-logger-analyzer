@@ -103,3 +103,42 @@ def test_other_aws_errors_stop_even_without_an_email(tmp_path):
     code, out, email = run_section(tmp_path, "ERROR:An error occurred (Throttling) when calling the "
                                               "DescribeStacks operation: Rate exceeded")
     assert code != 0 and email is None and "Throttling" in out
+
+
+TAG_START = "# ------------------------------------------------------------------ cost tag\n"
+TAG_END = "# ------------------------------------------------------------------ end cost tag\n"
+
+
+def run_cost_tag(tmp_path, **env):
+    """Run deploy.sh's cost-tag section; returns (exit code, APP_TAG, output)."""
+    with open(os.path.join(ROOT, "deploy.sh"), encoding="utf-8") as f:
+        script = f.read()
+    section = script[script.index(TAG_START):script.index(TAG_END)]
+    harness = tmp_path / "tag.sh"
+    harness.write_text('set -euo pipefail\nfail() { printf "ERROR: %s\\n" "$*" >&2; exit 1; }\n'
+                       + section + 'echo "APP_TAG=$APP_TAG"\n')
+    clean = {k: v for k, v in os.environ.items() if k not in ("APP_TAG", "SITE_MODE")}
+    proc = subprocess.run(["bash", str(harness)], capture_output=True, text=True, env={**clean, **env})
+    tag = next((line.split("=", 1)[1] for line in proc.stdout.splitlines()
+                if line.startswith("APP_TAG=")), None)
+    return proc.returncode, tag, proc.stdout + proc.stderr
+
+
+def test_each_site_gets_its_own_cost_tag(tmp_path):
+    assert run_cost_tag(tmp_path)[:2] == (0, "arrl-10ghz-web")
+    assert run_cost_tag(tmp_path, SITE_MODE="10ghz")[:2] == (0, "arrl-10ghz-web")
+    assert run_cost_tag(tmp_path, SITE_MODE="vhf")[:2] == (0, "arrl-vhf-web")
+    assert run_cost_tag(tmp_path, SITE_MODE="vhf", APP_TAG="my-tag")[:2] == (0, "my-tag")
+    code, _, out = run_cost_tag(tmp_path, APP_TAG="bad tag$")
+    assert code != 0 and "APP_TAG may use only" in out
+
+
+def test_app_budget_filters_on_the_stack_cost_tag():
+    with open(os.path.join(ROOT, "template.yaml"), encoding="utf-8") as f:
+        template = f.read()
+    assert "TagKeyValue: [!Sub 'user:app$${AppTag}']" in template
+    assert "user:app$arrl-10ghz-web" not in template
+    with open(os.path.join(ROOT, "deploy.sh"), encoding="utf-8") as f:
+        deploy = f.read()
+    assert '--tags "app=$APP_TAG"' in deploy and '"AppTag=$APP_TAG"' in deploy
+    assert "Value=arrl-10ghz-web" not in deploy
