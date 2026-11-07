@@ -395,7 +395,13 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
     in the PNG's `Software` and `Comment` metadata.
   - **The contest movie and the interactive maps:** in the map attribution corner,
     after "Leaflet | Natural Earth" (grid-mapper v1.7.1's new `--credit`).
-- Text files, Cabrillo logs and the .zip are unchanged for now.
+  - **Text reports** (summary, station report, analyses, comparison, processing notes):
+    the same line, as the last line of the file.
+  - **Cabrillo logs:** only the `CREATED-BY:` header, the field Cabrillo provides for the
+    program that made the file, e.g. `CREATED-BY: vhf.microwavedx.com by K2UA (v1.7.0)`.
+    ARRL's log checker ignores it; the QSO lines are untouched.
+  - **The .zip:** its archive comment, which most unzip tools show.
+- The web output still equals the CLI output except for these credits (`test_web_output_matches_cli`).
 
 ### v2.5.1 (2026-11-07): a cost tag per site
 

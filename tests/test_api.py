@@ -120,6 +120,11 @@ def test_web_output_matches_cli(call_api, output_dir, tmp_path):
     subprocess.run([sys.executable, os.path.join(analyzer, "station_report.py"), source],
                    text=True, cwd=cli_dir, env=env, check=True, capture_output=True)
 
+    # The web app adds only its site credit (a last line, the Cabrillo CREATED-BY).
+    import runner
+    for path in cli_dir.iterdir():
+        runner.credit_output(str(path))
+
     web = {f["name"]: local_file(output_dir, f).read_text() for f in body["files"]}
     assert web["K2UA_ARRL_10GHZ.log"] == (cli_dir / "K2UA_ARRL_10GHZ.log").read_text()
     assert web["K2UA_ARRL_10GHZ_Summary.txt"] == (cli_dir / "K2UA_ARRL_10GHZ_Summary.txt").read_text()

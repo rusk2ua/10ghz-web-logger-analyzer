@@ -101,6 +101,55 @@ def credit_png(path, text=None):
     out.save(path, pnginfo=meta, dpi=dpi) if dpi else out.save(path, pnginfo=meta)
     return True
 
+
+def credit_text(path, text=None):
+    """Add the site credit as the last line of a text report. Idempotent."""
+    text = text or site_credit()
+    with open(path, encoding="utf-8", errors="replace") as f:
+        body = f.read()
+    if body.rstrip().endswith(text):
+        return False
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(body.rstrip("\n") + "\n\n" + text + "\n")
+    return True
+
+
+_CREATED_BY_RE = re.compile(r"^CREATED-BY:[^\n]*?\(?(v\d[\w.]*)?\)?[ \t]*$", re.MULTILINE)
+
+
+def credit_cabrillo(path, host=None):
+    """Name the site in a Cabrillo log's CREATED-BY: header -- the field
+    Cabrillo provides for the program that made the file, which ARRL's log
+    checker ignores -- e.g. "CREATED-BY: vhf.microwavedx.com by K2UA (v1.7.0)".
+    The QSO lines are never touched. Returns True if changed."""
+    host = host or SITE_HOSTS[SITE_MODE]
+    with open(path, encoding="utf-8", errors="replace") as f:
+        body = f.read()
+    if not body.lstrip().upper().startswith("START-OF-LOG"):
+        return False
+    match = _CREATED_BY_RE.search(body)
+    if not match:
+        return False
+    version = f" ({match.group(1)})" if match.group(1) else ""
+    line = f"CREATED-BY: {host} by K2UA{version}"
+    if match.group(0).strip() == line:
+        return False
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(body[:match.start()] + line + body[match.end():])
+    return True
+
+
+def credit_output(path):
+    """Put the site credit on one produced file, by type."""
+    name = path.lower()
+    if name.endswith(".png"):
+        return credit_png(path)
+    if name.endswith(".txt"):
+        return credit_text(path)
+    if name.endswith(".log"):
+        return credit_cabrillo(path)
+    return False
+
 # Contest choices on the VHF site: AUTO (detect it from the log), a contest
 # id, or NONE (no contest -- maps and the movie only, no score).
 CONTEST_CHOICES = ("AUTO", "NONE", contests.ARRL_VHF_JAN, contests.ARRL_VHF_JUN,
@@ -330,11 +379,10 @@ def run_script(module_name, argv, workdir, callsign="", band_category="ALL"):
     produced = sorted(set(os.listdir(workdir)) - before)
     files = [os.path.join(workdir, f) for f in produced]
     for path in files:
-        if path.lower().endswith(".png"):
-            try:
-                credit_png(path)
-            except Exception:  # a credit line is never worth losing the image over
-                logger.exception("couldn't add the credit to %s", path)
+        try:
+            credit_output(path)
+        except Exception:  # a credit line is never worth losing the file over
+            logger.exception("couldn't add the credit to %s", path)
     return files, stdout.getvalue(), error
 
 

@@ -138,13 +138,30 @@ def _png_credit(path):
 
 
 @pytest.mark.parametrize("site, host", [("vhf", "vhf.microwavedx.com"), ("10ghz", "10ghz.microwavedx.com")])
-def test_images_and_html_carry_the_site_credit(call_api, output_dir, monkeypatch, site, host):
+def test_every_output_carries_the_site_credit(call_api, output_dir, monkeypatch, site, host):
+    import zipfile
     import runner
     monkeypatch.setattr(runner, "SITE_MODE", site)
     monkeypatch.setattr(runner._module("maidenhead_map"), "_animation_background", lambda *a, **k: {})
     credit = f"Created using {host} by K2UA"
-    outputs = ["grid_paths", "grid_movie"] + (["directional_viz"] if site == "10ghz" else [])
+    outputs = ["cabrillo", "summary", "station_report", "grid_paths", "grid_movie"]
+    outputs += ["directional_viz"] if site == "10ghz" else []
     status, body = call_api({"files": [TEN_GHZ], "outputs": outputs, "mapHtml": True})
+    assert status == 200, body
+
+    texts = [f for f in body["files"] if f["name"].endswith(".txt")]
+    assert len(texts) == 2
+    for f in texts:
+        assert local_file(output_dir, f).read_text(encoding="utf-8").rstrip().endswith(credit), f["name"]
+    [cabrillo] = [f for f in body["files"] if f["name"].endswith(".log")]
+    log = local_file(output_dir, cabrillo).read_text(encoding="utf-8")
+    assert f"\nCREATED-BY: {host} by K2UA (v1.7.0)\n" in log
+    assert log.count("CREATED-BY:") == 1 and "\nQSO: " in log
+    archive = output_dir / body["archive"]["url"][len("/output/"):]
+    with zipfile.ZipFile(archive) as z:
+        assert z.comment.decode() == credit
+        if "Processing_Notes.txt" in z.namelist():
+            assert z.read("Processing_Notes.txt").decode().rstrip().endswith(credit)
     assert status == 200, body
     pngs = [f for f in body["files"] if f["kind"] == "image"]
     htmls = [f for f in body["files"] if f["kind"] in ("html", "movie")]
