@@ -50,6 +50,105 @@ contests = importlib.import_module("contests")
 SITE_MODE = os.environ.get("SITE_MODE", "10ghz").strip().lower()
 if SITE_MODE not in ("10ghz", "vhf"):
     SITE_MODE = "10ghz"
+SITE_HOSTS = {"10ghz": "10ghz.microwavedx.com", "vhf": "vhf.microwavedx.com"}
+
+
+def site_credit():
+    """The credit line every image and HTML page this site produces carries."""
+    return f"Created using {SITE_HOSTS[SITE_MODE]} by K2UA"
+
+
+# The credit strip added under each PNG: small grey type, right-aligned, on a
+# band of the image's own background below the picture, so it never covers
+# any of the map or plot (the images are cropped tight to their content).
+_CREDIT_FONT = os.path.join(matplotlib.get_data_path(), "fonts", "ttf", "DejaVuSans.ttf")
+
+
+def credit_png(path, text=None):
+    """Add the site credit below a PNG and in its metadata. Idempotent: an
+    image already carrying the credit is left alone. Returns True if changed."""
+    from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
+
+    text = text or site_credit()
+    with Image.open(path) as im:
+        if im.info.get("Comment") == text:
+            return False
+        im.load()
+        info, dpi = dict(im.info), im.info.get("dpi")
+        base = im.convert("RGBA")
+    width, height = base.size
+    size = max(14, round(min(width, height) * 0.011))
+    font = ImageFont.truetype(_CREDIT_FONT, size)
+    pad = round(size * 0.7)
+    strip = size + 2 * pad
+    ground = base.getpixel((width - 1, height - 1))
+    if ground[3] == 0:
+        ground = (255, 255, 255, 255)
+    out = Image.new("RGBA", (width, height + strip), ground)
+    out.paste(base, (0, 0))
+    draw = ImageDraw.Draw(out)
+    lum = 0.299 * ground[0] + 0.587 * ground[1] + 0.114 * ground[2]
+    ink = (120, 126, 134, 255) if lum > 128 else (150, 156, 164, 255)
+    right = width - pad * 2
+    draw.text((right, height + strip // 2), text, font=font, fill=ink, anchor="rm")
+    meta = PngImagePlugin.PngInfo()
+    for key, value in info.items():
+        if isinstance(value, str) and key not in ("Comment", "Software"):
+            meta.add_text(key, value)
+    meta.add_text("Software", text)
+    meta.add_text("Comment", text)
+    out = out.convert("RGB") if base.getextrema()[3][0] == 255 else out
+    out.save(path, pnginfo=meta, dpi=dpi) if dpi else out.save(path, pnginfo=meta)
+    return True
+
+
+def credit_text(path, text=None):
+    """Add the site credit as the last line of a text report. Idempotent."""
+    text = text or site_credit()
+    with open(path, encoding="utf-8", errors="replace") as f:
+        body = f.read()
+    if body.rstrip().endswith(text):
+        return False
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(body.rstrip("\n") + "\n\n" + text + "\n")
+    return True
+
+
+_CREATED_BY_RE = re.compile(r"^CREATED-BY:[^\n]*?\(?(v\d[\w.]*)?\)?[ \t]*$", re.MULTILINE)
+
+
+def credit_cabrillo(path, host=None):
+    """Name the site in a Cabrillo log's CREATED-BY: header -- the field
+    Cabrillo provides for the program that made the file, which ARRL's log
+    checker ignores -- e.g. "CREATED-BY: vhf.microwavedx.com by K2UA (v1.7.0)".
+    The QSO lines are never touched. Returns True if changed."""
+    host = host or SITE_HOSTS[SITE_MODE]
+    with open(path, encoding="utf-8", errors="replace") as f:
+        body = f.read()
+    if not body.lstrip().upper().startswith("START-OF-LOG"):
+        return False
+    match = _CREATED_BY_RE.search(body)
+    if not match:
+        return False
+    version = f" ({match.group(1)})" if match.group(1) else ""
+    line = f"CREATED-BY: {host} by K2UA{version}"
+    if match.group(0).strip() == line:
+        return False
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(body[:match.start()] + line + body[match.end():])
+    return True
+
+
+def credit_output(path):
+    """Put the site credit on one produced file, by type."""
+    name = path.lower()
+    if name.endswith(".png"):
+        return credit_png(path)
+    if name.endswith(".txt"):
+        return credit_text(path)
+    if name.endswith(".log"):
+        return credit_cabrillo(path)
+    return False
 
 # Contest choices on the VHF site: AUTO (detect it from the log), a contest
 # id, or NONE (no contest -- maps and the movie only, no score).
@@ -279,6 +378,11 @@ def run_script(module_name, argv, workdir, callsign="", band_category="ALL"):
 
     produced = sorted(set(os.listdir(workdir)) - before)
     files = [os.path.join(workdir, f) for f in produced]
+    for path in files:
+        try:
+            credit_output(path)
+        except Exception:  # a credit line is never worth losing the file over
+            logger.exception("couldn't add the credit to %s", path)
     return files, stdout.getvalue(), error
 
 
@@ -431,6 +535,7 @@ def _run_maps(src, index, maps, map_options, workdir, run_once, maps_from=(conte
         argv.append("--html")
     if map_options.get("osm"):
         argv.append("--osm-basemap")
+    argv += ["--credit", site_credit()]
     files, notes, error = run_script("maidenhead_map", argv,
                                      os.path.join(workdir, f"src{index}", "maidenhead_map"))
 
@@ -452,6 +557,7 @@ def _run_movie(src, index, map_options, workdir, run_once, maps_from=(contests.A
     argv = [cabrillo, "--animate-only"]
     if map_options.get("osm"):
         argv.append("--osm-basemap")
+    argv += ["--credit", site_credit()]
     files, notes, error = run_script("maidenhead_map", argv,
                                      os.path.join(workdir, f"src{index}", "maidenhead_map_movie"))
     kept = [f for f in files if re.search(MOVIE_PATTERN, os.path.basename(f))]

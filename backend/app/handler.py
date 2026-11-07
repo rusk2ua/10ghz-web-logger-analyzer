@@ -276,6 +276,7 @@ def process(req, store, workdir, record):
     files, notes, errors, used_names = [], [], [], set()
     zip_path = os.path.join(workdir, "all-results.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.comment = runner.site_credit().encode("utf-8")
         for result in results:
             if result.error:
                 errors.append({"output": result.output, "label": runner.OUTPUT_LABELS[result.output],
@@ -306,7 +307,8 @@ def process(req, store, workdir, record):
                 })
         if notes:
             archive.writestr("Processing_Notes.txt", "\n\n".join(
-                f"== {n['label']} ({n['source']}) ==\n{n['text']}" for n in notes))
+                f"== {n['label']} ({n['source']}) ==\n{n['text']}" for n in notes)
+                + "\n\n" + runner.site_credit() + "\n")
 
     archive_info = None
     if files:
