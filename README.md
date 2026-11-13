@@ -27,11 +27,11 @@ Anyone can upload a contest log (Cabrillo, ADIF or CSV) or paste a Google Sheets
 
 The web app runs both CLI projects' own scripts, vendored unmodified, so its scores,
 reports and maps are identical to the command-line versions. Currently vendored:
-10ghz-log-analyzer **v1.7.0** and grid-mapper **v1.7.1** (see `UPSTREAM.txt` in
+10ghz-log-analyzer **v1.7.0** and grid-mapper **v1.8.0** (see `UPSTREAM.txt` in
 `backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
-**v2.6.0**. See the [version history](#version-history).
+**v2.6.1**. See the [version history](#version-history).
 
 ## The VHF site
 
@@ -387,6 +387,20 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
 
 ## Version history
 
+### v2.6.1 (2026-11-13): readable call labels, +/− zoom in the movie
+
+From grid-mapper v1.8.0, fixing two things reported in the 10 GHz and Up Slack:
+
+- **Path maps:** stations worked at the same spot (same grid, so the same marker) used to
+  get a label each, printed on top of each other: VE3FN over VE2ZAZ read as a station that
+  wasn't in the log. Now each spot has one marker and one label listing every call, then
+  the distance (`VE2ZAZ / VE3FN / 49.9 km`); past six calls it says `+N more`, and the
+  interactive map's popup lists them all. Labels that nearby ones would cover slide clear,
+  with a thin leader line on the image; the interactive map re-checks after every zoom.
+- **Contest movie:** **+** and **−** buttons (and keys) replace Region / Area / Local, from
+  the whole region in to two levels closer than Local. Calls that flash up at the same
+  spot stack instead of printing over each other.
+
 ### v2.6.0 (2026-11-07): view maps and plots in the browser
 
 - **Images and interactive maps open in a new tab** when you click them, instead of
@@ -479,8 +493,8 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
   sent exchange from one operating location to the next and draws a line to each station as
   it was worked, with a fixed color, dash and marker per band. Every operating day plays on
   one timeline (both weekends of the 10 GHz and Up contest as one four-day period), with long
-  breaks and drives fast-forwarded. Controls: 0.5×/1×/2× speed, a draggable timeline, fixed
-  Region/Area/Local zoom, band toggles and a table of operating locations. Works on phones.
+  breaks and drives fast-forwarded. Controls: 0.5×/1×/2× speed, a draggable timeline,
+  +/− zoom buttons, band toggles and a table of operating locations. Works on phones.
 - **It plays instead of downloading.** The movie is stored with `Content-Disposition: inline`,
   so the "▶ Watch" link opens it in a new tab (on a phone, a downloaded `.html` file opens in a
   preview that doesn't run it). Every other file still downloads; the .zip includes the movie.

@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.patheffects as path_effects
 import matplotlib.colors as mcolors
+from matplotlib.text import Text
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import cartopy.io.img_tiles as cimgt
@@ -918,20 +919,55 @@ const DATA = __DATA_JSON__;
     L.polyline(ln, { color: 'crimson', weight: 1.5, opacity: 0.85 }).addTo(map);
   });
 
+  var stationTips = [];
   (DATA.markers || []).forEach(function (m) {
     var dot = L.circleMarker([m.lat, m.lon], {
       radius: 6, color: '#000', weight: 0.8, fillColor: 'crimson', fillOpacity: 0.9
     }).addTo(map);
     bindHoverPopup(dot, m.popup);
     dot.bindTooltip(m.label, { permanent: true, direction: 'right', offset: [6, 0], className: 'station-label' });
+    stationTips.push(dot.getTooltip());
   });
 
+  var homeTip = null;
   if (DATA.home) {
     var star = L.marker([DATA.home.lat, DATA.home.lon], {
       icon: L.divIcon({ className: '', html: '<div class="home-star">★</div>', iconSize: [30, 30], iconAnchor: [15, 15] })
     }).addTo(map);
     star.bindTooltip(DATA.home.label, { permanent: true, direction: 'top', className: 'station-label' });
+    homeTip = star.getTooltip();
   }
+
+  // Nearby stations' labels would overlap at some zoom levels: after each
+  // zoom, slide any label that another would cover down just below it.
+  function declutter() {
+    var PAD = 2;
+    var placed = [];
+    if (homeTip && homeTip.getElement()) placed.push(homeTip.getElement().getBoundingClientRect());
+    var items = stationTips.map(function (tip) {
+      tip.options.offset = L.point(6, 0);
+      tip.update();
+      return { tip: tip, r: tip.getElement() ? tip.getElement().getBoundingClientRect() : null };
+    }).filter(function (it) { return it.r; });
+    items.sort(function (a, b) { return a.r.top - b.r.top; });
+    items.forEach(function (it) {
+      var r = it.r, dy = 0;
+      for (var n = 0; n < 60; n++) {
+        var hit = null;
+        for (var k = 0; k < placed.length; k++) {
+          var p = placed[k];
+          if (r.left < p.right + PAD && r.right > p.left - PAD &&
+              r.top + dy < p.bottom + PAD && r.bottom + dy > p.top - PAD) { hit = p; break; }
+        }
+        if (!hit) break;
+        dy = hit.bottom + PAD - r.top;
+      }
+      if (dy) { it.tip.options.offset = L.point(6, dy); it.tip.update(); }
+      placed.push({ left: r.left, right: r.right, top: r.top + dy, bottom: r.bottom + dy });
+    });
+  }
+  map.on('zoomend', declutter);
+  declutter();
 })();
 </script>
 </body>
@@ -963,6 +999,113 @@ def _write_leaflet_html(data, output_file, page_title):
     out = out.replace('__DATA_JSON__', data_json)
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(out)
+
+# A path map label lists at most this many calls; the rest become "+N more"
+# (the HTML map's popup still lists every one).
+_MAX_CALLS_PER_LABEL = 6
+
+
+def _colocated_contact_groups(home_grid, unique_contacts):
+    """Worked stations grouped by the point their marker is drawn at.
+
+    Two stations in the same grid square (or worked with the same grid) land
+    on exactly the same spot, and drawing a separate label for each stacks
+    the calls on top of each other: VE2ZAZ under VE3FN reads as a station
+    that isn't in the log. Each group becomes one marker whose label lists
+    every call. Returns a list of dicts with lat, lon, calls (in log order,
+    no repeats), grids, and distance (km from home_grid, or None), in the
+    order each spot first appears in the log."""
+    groups = {}
+    order = []
+    for their_call, their_grid in unique_contacts:
+        center = grid_center(their_grid)
+        if not center:
+            continue
+        key = (round(center[0], 5), round(center[1], 5))
+        g = groups.get(key)
+        if g is None:
+            g = {'lat': center[0], 'lon': center[1], 'calls': [], 'grids': [],
+                 'distance': grid_distance_km(home_grid, their_grid)}
+            groups[key] = g
+            order.append(key)
+        if their_call not in g['calls']:
+            g['calls'].append(their_call)
+        if their_grid not in g['grids']:
+            g['grids'].append(their_grid)
+    return [groups[k] for k in order]
+
+
+def _group_label(group):
+    """Label text for one marker: each call on its own line, then the distance."""
+    calls = group['calls']
+    lines = list(calls[:_MAX_CALLS_PER_LABEL])
+    if len(calls) > _MAX_CALLS_PER_LABEL:
+        lines.append(f"+{len(calls) - _MAX_CALLS_PER_LABEL} more")
+    if group['distance'] is not None:
+        lines.append(f"{group['distance']:.1f} km")
+    return '\n'.join(lines)
+
+
+def _declutter_offsets(boxes, fixed=(), pad=2.0, max_moves=60):
+    """Vertical nudges, in display pixels, that keep labels from overlapping.
+
+    boxes are (x0, y0, x1, y1) label extents in display pixels (y grows
+    upward, as matplotlib's display coordinates do); fixed are extents that
+    stay put and that labels must avoid (the home station's label). Labels
+    are placed from the top of the map down, and one that would overlap an
+    already-placed label moves the shortest distance, up or down, to a spot
+    where it touches none. Returns one offset per box, in the order given."""
+    placed = [tuple(b) for b in fixed]
+    offsets = [0.0] * len(boxes)
+
+    def clear(x0, y0, x1, y1):
+        return not any(x0 < px1 + pad and x1 > px0 - pad and y0 < py1 + pad and y1 > py0 - pad
+                       for px0, py0, px1, py1 in placed)
+
+    for i in sorted(range(len(boxes)), key=lambda k: -boxes[k][3]):
+        x0, y0, x1, y1 = boxes[i]
+        dy = 0.0
+        if not clear(x0, y0, x1, y1):
+            # Candidate spots: just below or just above each label already
+            # placed in this column; take the nearest one that's free.
+            column = [p for p in placed if x0 < p[2] + pad and x1 > p[0] - pad]
+            candidates = sorted({p[1] - pad - y1 for p in column} | {p[3] + pad - y0 for p in column},
+                                key=abs)
+            for cand in candidates[:max_moves]:
+                if clear(x0, y0 + cand, x1, y1 + cand):
+                    dy = cand
+                    break
+        offsets[i] = dy
+        placed.append((x0, y0 + dy, x1, y1 + dy))
+    return offsets
+
+
+def _declutter_path_labels(fig, ax, labels, home_label):
+    """Slide create_path_map's worked-station labels apart where nearby
+    stations' labels would overlap, measured at the final layout."""
+    if len(labels) < 2 and home_label is None:
+        return
+    renderer = fig.canvas.get_renderer()
+    ax.apply_aspect()
+
+    def extent(artist):
+        # The text alone: an annotation's own extent would add its leader line.
+        if hasattr(artist, 'update_positions'):
+            artist.update_positions(renderer)
+        bb = Text.get_window_extent(artist, renderer)
+        return (bb.x0, bb.y0, bb.x1, bb.y1)
+
+    boxes = [extent(t) for t in labels]
+    fixed = [extent(home_label)] if home_label is not None else []
+    points_per_px = 72.0 / fig.dpi
+    for t, dy in zip(labels, _declutter_offsets(boxes, fixed)):
+        if dy:
+            x, y = t.xyann
+            t.xyann = (x, y + dy * points_per_px)
+        elif t.arrow_patch is not None:
+            # A label beside its own marker needs no leader line.
+            t.arrow_patch.set_visible(False)
+
 
 def create_path_map(home_grid, contacts, callsign, band, output_file=None,
                      osm_basemap=False, osm_opacity=0.3):
@@ -1014,40 +1157,39 @@ def create_path_map(home_grid, contacts, callsign, band, output_file=None,
     ax.add_feature(cfeature.OCEAN, alpha=0.2, color='lightblue')
     ax.add_feature(cfeature.LAKES, edgecolor='blue', facecolor='none', linewidth=0.5)
 
+    # Stations at the same spot share one marker and one label (see
+    # _colocated_contact_groups), so their calls never print over each other.
+    groups = _colocated_contact_groups(home_grid, unique_contacts)
+
     # Lines from home station to each worked station, drawn first so markers sit on top
-    for their_call, their_grid in unique_contacts:
-        center = grid_center(their_grid)
-        if not center:
-            continue
-        their_lat, their_lon = center
-        ax.plot([home_lon, their_lon], [home_lat, their_lat],
+    for g in groups:
+        ax.plot([home_lon, g['lon']], [home_lat, g['lat']],
                  color='crimson', linewidth=1.2, alpha=0.8,
                  transform=ccrs.Geodetic(), zorder=3)
 
-    # Worked-station markers with callsign + distance labels
-    for their_call, their_grid in unique_contacts:
-        center = grid_center(their_grid)
-        if not center:
-            continue
-        their_lat, their_lon = center
-        distance = grid_distance_km(home_grid, their_grid)
-        label = their_call
-        if distance is not None:
-            label += f"\n{distance:.1f} km"
-
-        ax.plot(their_lon, their_lat, marker='o', markersize=7,
+    # Worked-station markers with callsign + distance labels. A label that a
+    # nearby one would cover slides down (after layout, below) and keeps a
+    # thin leader line back to its marker.
+    geo = ccrs.PlateCarree()._as_mpl_transform(ax)
+    labels = []
+    for g in groups:
+        ax.plot(g['lon'], g['lat'], marker='o', markersize=7,
                  markerfacecolor='crimson', markeredgecolor='black',
                  markeredgewidth=0.8, transform=ccrs.PlateCarree(), zorder=4)
-        ax.text(their_lon, their_lat, f"  {label}", fontsize=7, fontweight='bold',
-                 ha='left', va='center', color='black',
-                 path_effects=[path_effects.withStroke(linewidth=2, foreground='white')],
-                 transform=ccrs.PlateCarree(), zorder=5)
+        labels.append(ax.annotate(
+            _group_label(g), xy=(g['lon'], g['lat']), xycoords=geo,
+            xytext=(4, 0), textcoords='offset points',
+            fontsize=7, fontweight='bold', ha='left', va='center', color='black',
+            path_effects=[path_effects.withStroke(linewidth=2, foreground='white')],
+            arrowprops=dict(arrowstyle='-', color='0.25', linewidth=0.8,
+                            relpos=(0, 0.5), shrinkA=1, shrinkB=4),
+            annotation_clip=False, zorder=5))
 
     # Home station marker: distinct gold star, drawn on top of everything else
     ax.plot(home_lon, home_lat, marker='*', markersize=22,
              markerfacecolor='gold', markeredgecolor='black',
              markeredgewidth=1.2, transform=ccrs.PlateCarree(), zorder=6)
-    ax.text(home_lon, home_lat, f"  {callsign} ({home_grid})", fontsize=9, fontweight='bold',
+    home_label = ax.text(home_lon, home_lat, f"  {callsign} ({home_grid})", fontsize=9, fontweight='bold',
              ha='left', va='top', color='black',
              path_effects=[path_effects.withStroke(linewidth=2.5, foreground='white')],
              transform=ccrs.PlateCarree(), zorder=7)
@@ -1069,6 +1211,7 @@ def create_path_map(home_grid, contacts, callsign, band, output_file=None,
         fontsize=13, fontweight='bold')
 
     plt.tight_layout()
+    _declutter_path_labels(fig, ax, labels, home_label)
 
     if not output_file:
         # Home grid is included so multiple operating locations (e.g. a rover)
@@ -1124,19 +1267,16 @@ def create_path_map_html(home_grid, contacts, qso_records, callsign, band, outpu
     lines = []
     markers = []
     distances = []
-    for their_call, their_grid in unique_contacts:
-        center = grid_center(their_grid)
-        if not center:
-            continue
-        their_lat, their_lon = center
-        lines.append([[home_lat, home_lon], [their_lat, their_lon]])
-        distance = grid_distance_km(home_grid, their_grid)
-        if distance is not None:
-            distances.append(distance)
-        label = their_call + (f"\n{distance:.1f} km" if distance is not None else '')
+    # Stations at the same spot share one dot, one label listing every call,
+    # and one popup with all of their contacts (see _colocated_contact_groups).
+    for g in _colocated_contact_groups(home_grid, unique_contacts):
+        lines.append([[home_lat, home_lon], [g['lat'], g['lon']]])
+        if g['distance'] is not None:
+            distances.append(g['distance'])
+        records = [rec for grid in g['grids'] for rec in records_by_grid.get(grid, [])]
         markers.append({
-            'lat': their_lat, 'lon': their_lon, 'label': label,
-            'popup': _build_popup_html(their_grid, records_by_grid.get(their_grid, [])),
+            'lat': g['lat'], 'lon': g['lon'], 'label': _esc(_group_label(g)),
+            'popup': _build_popup_html(g['grids'][0], records),
         })
 
     max_dist = max(distances) if distances else 0
@@ -1148,7 +1288,7 @@ def create_path_map_html(home_grid, contacts, qso_records, callsign, band, outpu
         'bounds': [[lat_min, lon_min], [lat_max, lon_max]],
         'osm': {'opacity': osm_opacity} if (osm_basemap and band_is_osm_eligible(band)) else None,
         'background': _background_geojson(lon_min, lon_max, lat_min, lat_max),
-        'home': {'lat': home_lat, 'lon': home_lon, 'label': f"{callsign} ({home_grid})"},
+        'home': {'lat': home_lat, 'lon': home_lon, 'label': _esc(f"{callsign} ({home_grid})")},
         'lines': lines,
         'markers': markers,
     }
@@ -1897,7 +2037,8 @@ def build_animation_data(qso_records_by_band, fallback_home_grid=None, target_se
         activated = []
     clock = [[round(times[0] - _ANIM_LEAD, 3), events[0]['utc']]] + [[ev['t'], ev['utc']] for ev in events]
 
-    # Camera: three fixed zoom levels. "Area" is the one where a typical long
+    # Camera: three reference zoom levels. The page's plus/minus buttons step
+    # between "region" and two levels past "local". "Area" is the one where a typical long
     # contact (90th percentile) still fits comfortably around the station.
     kms = sorted(e['km'] for e in events)
     reach_km = max(25.0, kms[min(len(kms) - 1, int(len(kms) * 0.9))])
@@ -1981,7 +2122,9 @@ __LEAFLET_CSS__
   .leg .count { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--ink-2); }
   #legend .hint { margin: 6px 4px 0; font-size: 11px; color: var(--ink-3); }
 
-  #zoom { top: auto; right: 14px; bottom: 96px; padding: 6px; display: flex; gap: 6px; }
+  #zoom { top: auto; right: 14px; bottom: 96px; padding: 6px; display: flex; flex-direction: column; gap: 6px; }
+  #zoom button { width: 36px; height: 36px; padding: 0; font-size: 20px; line-height: 1; font-weight: 600; }
+  #zoom button:disabled { opacity: .35; cursor: default; }
 
   #controls { left: 14px; right: 14px; bottom: 14px; padding: 10px 12px; display: flex; align-items: center; gap: 10px; }
   #controls .group { display: flex; gap: 4px; }
@@ -2049,7 +2192,7 @@ __LEAFLET_CSS__
     .leg { width: auto; margin: 0; padding: 2px 6px; gap: 5px; font-size: 12px; }
     .leg svg { width: 32px; }
     #zoom { top: 50%; bottom: auto; right: 10px; transform: translateY(-50%); flex-direction: column; padding: 4px; gap: 4px; }
-    #zoom button { padding: 5px 8px; font-size: 12px; }
+    #zoom button { width: 32px; height: 32px; font-size: 18px; }
     #banner { top: auto; bottom: 168px; max-width: calc(100vw - 20px); overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
     #controls { left: 10px; right: 10px; bottom: 10px; padding: 8px 10px 6px; flex-wrap: wrap; gap: 6px; }
     #controls button { padding: 4px 8px; }
@@ -2083,10 +2226,9 @@ __LEAFLET_CSS__
   <p class="hint">Click a band to hide or show it.</p>
 </div>
 
-<div id="zoom" class="panel" role="group" aria-label="Zoom level">
-  <button type="button" data-zoom="region">Region</button>
-  <button type="button" data-zoom="area">Area</button>
-  <button type="button" data-zoom="local">Local</button>
+<div id="zoom" class="panel" role="group" aria-label="Zoom">
+  <button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in (+)">+</button>
+  <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out (&minus;)">&minus;</button>
 </div>
 
 <div id="banner" class="panel" hidden></div>
@@ -2178,8 +2320,11 @@ const DATA = __DATA_JSON__;
   map.attributionControl.addAttribution('Natural Earth');
   if (D.credit) map.attributionControl.addAttribution(D.credit);
   var canvas = L.canvas({ padding: 0.6 });
-  var zoomKey = 'area';
-  map.setView([S[0].lat, S[0].lon], D.zooms[zoomKey]);
+  // Zoom: plus/minus one level at a time, from "region" (the outermost
+  // stations, which the background is drawn to cover) in to two levels past
+  // "local". The movie opens at "area".
+  var ZMIN = D.zooms.region, ZMAX = Math.min(18, D.zooms.local + 2);
+  map.setView([S[0].lat, S[0].lon], D.zooms.area);
 
   // OpenStreetMap's tile servers refuse requests without a Referer, which a
   // page opened from a saved file never sends: they'd draw "Access blocked".
@@ -2280,10 +2425,30 @@ const DATA = __DATA_JSON__;
     layers[i] = null;
   }
 
+  // A call that flashes up at the same spot as one still on screen (two
+  // stations in one grid, worked back to back) stacks above it rather than
+  // printing over it: VE3FN over VE2ZAZ otherwise reads as "VE3FNZ".
+  var FLASH_ROW = 16, FLASH_SLOTS = 6;
+  function flashSlot(e) {
+    var p = map.latLngToContainerPoint([e.lat, e.lon]);
+    var taken = {};
+    flashes.forEach(function (f) {
+      var q = map.latLngToContainerPoint(f.getLatLng());
+      if (Math.abs(q.x - p.x) < 70 && Math.abs(q.y - p.y) < FLASH_ROW * FLASH_SLOTS) {
+        var row = Math.round((p.y - q.y) / FLASH_ROW) + f.slot;
+        taken[row] = true;
+      }
+    });
+    var slot = 0;
+    while (taken[slot] && slot < FLASH_SLOTS - 1) slot++;
+    return slot;
+  }
   function flash(e) {
+    var slot = flashSlot(e);
     var f = L.marker([e.lat, e.lon], { interactive: false, keyboard: false,
-      icon: L.divIcon({ className: '', iconSize: [0, 0], iconAnchor: [-8, 18],
+      icon: L.divIcon({ className: '', iconSize: [0, 0], iconAnchor: [-8, 18 + slot * FLASH_ROW],
         html: '<div class="call-flash"></div>' }) }).addTo(map);
+    f.slot = slot;
     f.getElement().firstChild.textContent = e.call;
     flashes.push(f);
     while (flashes.length > MAX_FLASHES) map.removeLayer(flashes.shift());
@@ -2513,14 +2678,14 @@ const DATA = __DATA_JSON__;
       render(false);
     });
   });
-  function setZoomKey(key) {
-    zoomKey = key;
-    document.querySelectorAll('[data-zoom]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.zoom === key)); });
-    map.setZoom(D.zooms[key], { animate: !playing && !reduceMotion });
+  function setZoom(z) {
+    z = Math.max(ZMIN, Math.min(ZMAX, z));
+    $('zoom-in').disabled = z >= ZMAX;
+    $('zoom-out').disabled = z <= ZMIN;
+    if (z !== map.getZoom()) map.setZoom(z, { animate: !playing && !reduceMotion });
   }
-  document.querySelectorAll('[data-zoom]').forEach(function (b) {
-    b.addEventListener('click', function () { setZoomKey(b.dataset.zoom); });
-  });
+  $('zoom-in').addEventListener('click', function () { setZoom(map.getZoom() + 1); });
+  $('zoom-out').addEventListener('click', function () { setZoom(map.getZoom() - 1); });
   var scrub = $('scrub');
   scrub.addEventListener('input', function () {
     if (!started) { started = true; $('start').hidden = true; }
@@ -2532,6 +2697,10 @@ const DATA = __DATA_JSON__;
     if (ev.key === ' ' && tag !== 'BUTTON' && tag !== 'INPUT') {
       ev.preventDefault();
       if (!started) begin(); else setPlaying(!playing);
+    } else if ((ev.key === '+' || ev.key === '=') && !ev.ctrlKey && !ev.metaKey) {
+      setZoom(map.getZoom() + 1);
+    } else if ((ev.key === '-' || ev.key === '_') && !ev.ctrlKey && !ev.metaKey) {
+      setZoom(map.getZoom() - 1);
     }
   });
 
@@ -2589,7 +2758,7 @@ const DATA = __DATA_JSON__;
   text('start-sub', D.totals.qsos + ' QSOs · ' + D.totals.calls + ' stations · ' + D.totals.stops +
     ' operating location' + (D.totals.stops === 1 ? '' : 's') + ' · ' + D.totals.days + ' day' +
     (D.totals.days === 1 ? '' : 's'));
-  setZoomKey('area');
+  setZoom(D.zooms.area);
   window.addEventListener('resize', function () { map.invalidateSize(false); center = null; render(false); });
 
   // For automated checks and embedding: jump to a moment and report state.
@@ -2781,7 +2950,7 @@ def main():
                        help='Also generate an animated HTML "movie" of the whole log: the map follows '
                             'you from one operating location to the next while a line to each worked '
                             'station is drawn in as the contact was made, colored by band, with '
-                            '0.5x/1x/2x playback, three fixed zoom levels, a timeline and a summary '
+                            '0.5x/1x/2x playback, plus/minus zoom, a timeline and a summary '
                             'table. All operating days (e.g. both weekends of the ARRL 10 GHz and Up '
                             'contest) play back to back; long breaks and drives are fast-forwarded.')
     parser.add_argument('--animate-only', action='store_true',
