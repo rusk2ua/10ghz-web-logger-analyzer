@@ -227,24 +227,82 @@ def _normalize_header(col):
     return str(col).strip().lower().replace(' ', '').replace('_', '')
 
 
+# Other names a CSV header may use for each column, compared after
+# _normalize_header (case, spaces and underscores ignored). The same names
+# grid-mapper accepts, so one CSV works in both tools.
+COLUMN_ALIASES = {
+    'date': ('date', 'qsodate'),
+    'band': ('band',),
+    'sourcegrid': ('sourcegrid', 'mygrid', 'mygridsquare', 'homegrid', 'stationgrid'),
+    'time': ('time', 'qsotime', 'timeon'),
+    'call': ('call', 'callsign'),
+    'grid': ('grid', 'gridsquare', 'theirgrid', 'dxgrid'),
+}
+
+
+class CsvHeaderError(ValueError):
+    """A CSV header names some of the QSO columns but not all of them."""
+
+
+def _match_columns(columns):
+    """{raw column: header in the file} for every raw column the header names."""
+    found = {}
+    for header in columns:
+        norm = _normalize_header(header)
+        for col, aliases in COLUMN_ALIASES.items():
+            if col not in found and norm in aliases:
+                found[col] = header
+                break
+    return found
+
+
+_CALL_RE = re.compile(r'^(?=.*\d)[A-Z0-9]{1,4}/?[A-Z0-9]{2,}(/[A-Z0-9]+)*$')
+_GRID_RE = re.compile(r'^[A-R]{2}\d{2}([A-X]{2})?$')
+
+
+def _first_rows_are_qsos(df, found):
+    """Whether the two rows the legacy layout would skip hold contacts (a
+    call sign or grid square where the header says one is). Only then is a
+    half-recognized header a mistake worth stopping for; a sheet export's
+    title and note rows aren't."""
+    if len(df) < 2:
+        return len(df) > 0
+    checks = [(found[c], rx) for c, rx in (('call', _CALL_RE), ('grid', _GRID_RE)) if c in found]
+    if not checks:
+        return True
+    return all(all(rx.match(str(df[col].iloc[i]).strip().upper()) for col, rx in checks)
+               for i in range(2))
+
+
 def load_local_raw_csv(path):
     """Load a local raw QSO CSV and normalize it to RAW_COLUMNS.
 
     Supports two layouts:
-      - A clean header row containing date/band/sourcegrid/time/call/grid
-        (in any order, any case, spaces/underscores ignored) -- this is the
-        format of the sample file in logs/ and the recommended format for
+      - A header row naming date/band/sourcegrid/time/call/grid in any order
+        and case (spaces/underscores ignored), or a common alternative name
+        for each (see COLUMN_ALIASES, e.g. my_grid for sourcegrid) -- this is
+        the format of the sample file in logs/ and the recommended format for
         a hand-exported CSV.
       - The legacy raw Google Sheets export layout: no usable header, two
         leading rows skipped, columns in fixed order. This matches a direct
         "File > Download > .csv" export of the original sheet template.
+
+    A header that names some of the columns but not all raises CsvHeaderError
+    instead: treating it as the legacy layout would silently drop the first
+    two QSOs and read the columns in the wrong places.
     """
     df = pd.read_csv(path)
-    normalized = {_normalize_header(c): c for c in df.columns}
+    found = _match_columns(df.columns)
 
-    if set(RAW_COLUMNS).issubset(normalized.keys()):
-        renamed = df.rename(columns={normalized[col]: col for col in RAW_COLUMNS})
+    if len(found) == len(RAW_COLUMNS):
+        renamed = df.rename(columns={header: col for col, header in found.items()})
         return renamed[RAW_COLUMNS].copy()
+    if len(found) >= 2 and _first_rows_are_qsos(df, found):
+        missing = [c for c in RAW_COLUMNS if c not in found]
+        raise CsvHeaderError(
+            f"{os.path.basename(str(path))}: the header row has no column for "
+            f"{', '.join(missing)}. Name the columns {', '.join(RAW_COLUMNS)} "
+            f"(for example, use 'sourcegrid' or 'my_grid' for your own grid).")
 
     # No recognizable header -- fall back to the legacy positional layout.
     contact_data = df.iloc[2:].copy()
@@ -478,7 +536,7 @@ def load_source_or_exit(cli_arg=None, default_url=DEFAULT_SHEET_URL, verbose=Tru
     import sys
     try:
         return resolve_source(cli_arg, default_url=default_url, verbose=verbose)
-    except FileNotFoundError as e:
+    except (FileNotFoundError, CsvHeaderError) as e:
         print(f"Error: {e}")
         sys.exit(1)
 

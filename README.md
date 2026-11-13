@@ -27,7 +27,7 @@ Anyone can upload a contest log (Cabrillo, ADIF or CSV) or paste a Google Sheets
 
 The web app runs both CLI projects' own scripts, vendored unmodified, so its scores,
 reports and maps are identical to the command-line versions. Currently vendored:
-10ghz-log-analyzer **v1.7.0** and grid-mapper **v1.8.0** (see `UPSTREAM.txt` in
+10ghz-log-analyzer **v1.7.1** and grid-mapper **v1.8.0** (see `UPSTREAM.txt` in
 `backend/app/analyzer/` and `backend/app/gridmapper/`).
 
 **Live at [10ghz.microwavedx.com](https://10ghz.microwavedx.com)** · Web app version
@@ -387,7 +387,13 @@ outputs, bad call sign, oversized file) returns HTTP 400 with a readable `messag
 
 ## Version history
 
-### v2.6.1 (2026-11-13): readable call labels, +/− zoom in the movie
+### v2.6.1 (2026-11-13): readable call labels, +/− zoom, no lost CSV QSOs
+
+- **CSV logs keep every QSO** (10ghz-log-analyzer v1.7.1). A CSV whose header used another
+  name for a column, such as `my_grid` instead of `sourcegrid`, was read as the old Google
+  Sheets layout, which skips two rows: its first two QSOs silently disappeared from every
+  output. Common alternative names (`my_grid`, `home_grid`, `callsign`, `gridsquare`, ...)
+  now work, and a header that's missing a column says which one instead of guessing.
 
 From grid-mapper v1.8.0, fixing two things reported in the 10 GHz and Up Slack:
 

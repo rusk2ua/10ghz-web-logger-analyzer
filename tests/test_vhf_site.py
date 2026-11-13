@@ -155,7 +155,8 @@ def test_every_output_carries_the_site_credit(call_api, output_dir, monkeypatch,
         assert local_file(output_dir, f).read_text(encoding="utf-8").rstrip().endswith(credit), f["name"]
     [cabrillo] = [f for f in body["files"] if f["name"].endswith(".log")]
     log = local_file(output_dir, cabrillo).read_text(encoding="utf-8")
-    assert f"\nCREATED-BY: {host} by K2UA (v1.7.0)\n" in log
+    version = runner._module("arrl_10ghz_cabrillo").VERSION
+    assert f"\nCREATED-BY: {host} by K2UA (v{version})\n" in log
     assert log.count("CREATED-BY:") == 1 and "\nQSO: " in log
     archive = output_dir / body["archive"]["url"][len("/output/"):]
     with zipfile.ZipFile(archive) as z:

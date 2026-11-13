@@ -1,5 +1,5 @@
 repository: https://github.com/rusk2ua/10ghz-log-analyzer.git
-ref: main
-commit: 4d2790e484e14cbdae35d278ca53d684d967e099
-version: v1.7.0
-synced: 2026-11-06T21:09:42Z
+ref: claude/admiring-hamilton-n33dcf
+commit: c9e0e105ca1a20fd9e1a24734ede5d1b27239bf2
+version: v1.7.1
+synced: 2026-11-13T12:56:46Z

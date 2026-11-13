@@ -24,7 +24,7 @@ from data_source import (
     SOURCE_HELP, file_safe_call, load_source_or_exit, band_to_cabrillo, read_log_header,
 )
 
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 
 # Cabrillo QSO-line modes: CW, PH, FM, RY, DG.
 _CABRILLO_MODES = {
