@@ -265,13 +265,14 @@ def _first_rows_are_qsos(df, found):
     call sign or grid square where the header says one is). Only then is a
     half-recognized header a mistake worth stopping for; a sheet export's
     title and note rows aren't."""
-    if len(df) < 2:
-        return len(df) > 0
+    rows = range(min(2, len(df)))
+    if not rows:
+        return False
     checks = [(found[c], rx) for c, rx in (('call', _CALL_RE), ('grid', _GRID_RE)) if c in found]
     if not checks:
         return True
     return all(all(rx.match(str(df[col].iloc[i]).strip().upper()) for col, rx in checks)
-               for i in range(2))
+               for i in rows)
 
 
 def load_local_raw_csv(path):
