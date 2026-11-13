@@ -169,7 +169,8 @@
         <code>TIME_ON</code>. Confirmation fields are ignored &ndash; to map only confirmed contacts, filter the ADIF file in your
         logger before uploading it.</p>
       <p><strong>CSV (.csv), or a Google Sheet</strong> &ndash; one row per QSO with the columns
-        <code>date, band, sourcegrid, time, call, grid</code> (bands as 50, 144, 222, 432, 902, 1.2G, 2.3G, &hellip;):</p>
+        <code>date, band, sourcegrid, time, call, grid</code> (bands as 50, 144, 222, 432, 902, 1.2G, 2.3G,         <code>date, band, sourcegrid, time, call, grid</code> (bands as 50, 144, 222, 432, 902, 1.2G, 2.3G, &hellip;):</p>hellip;;
+        <code>sourcegrid</code> is your own grid, and <code>my_grid</code> or <code>home_grid</code> work too):</p>
       <pre>date,band,sourcegrid,time,call,grid
 2026-06-13,144,FN12,1802,W2AAA,FN13
 ,432,,1805,W2AAA,FN13
@@ -192,8 +193,8 @@
       <p>Maps are drawn by K2UA&rsquo;s open-source <a href="https://github.com/rusk2ua/grid-mapper" rel="noopener">grid-mapper</a>,
         one per band and per rover stop. The <strong>contest movie</strong> replays your log in time order: the map follows you
         from grid to grid, shading each grid you activate, while a line is drawn to every station you work, styled by band,
-        and your score climbs. Use 0.5&times;, 1&times; or 2&times; speed, drag the timeline, switch between the Region, Area and
-        Local zoom levels, tap a band to hide it, or open the table of rover stops. It opens in a new browser tab (phones too);
+        and your score climbs. Use 0.5&times;, 1&times; or 2&times; speed, drag the timeline, zoom in and out
+        with the + and &minus; buttons, tap a band to hide it, or open the table of rover stops. It opens in a new browser tab (phones too);
         the &ldquo;Download everything&rdquo; .zip keeps a copy that plays offline.
         Coastline and border data: <a href="https://www.naturalearthdata.com/" rel="noopener">Natural Earth</a>;
         street underlay: &copy; <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap</a> contributors.</p>

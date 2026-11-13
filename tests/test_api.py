@@ -223,3 +223,23 @@ def test_download_name_is_header_safe():
     assert storage.safe_download_name('K2UA_Report_2026"\r\nX-Evil: 1.txt') == "K2UA_Report_2026___X-Evil__1.txt"
     assert storage.safe_download_name("K2UA_EN91kt_direction_analysis_2026-08-15.png") == \
         "K2UA_EN91kt_direction_analysis_2026-08-15.png"
+
+
+def test_csv_with_my_grid_header_keeps_every_qso(call_api, output_dir):
+    """A CSV naming its home-grid column my_grid used to lose its first two
+    QSOs (read as the legacy sheet layout, which skips two rows)."""
+    content = CSV["content"].replace("sourcegrid", "my_grid", 1)
+    assert content.startswith("date,band,my_grid,")
+    status, body = call_api({"files": [{"name": "my_grid.csv", "content": content}],
+                             "callsign": "K2UA", "outputs": ["cabrillo"]})
+    assert status == 200, body
+    assert body["logs"][0]["qsos"] == 7
+    assert local_file(output_dir, body["files"][0]).read_text().count("\nQSO: ") == 7
+
+
+def test_csv_header_missing_a_column_is_explained(call_api):
+    content = CSV["content"].replace("sourcegrid", "where_i_was", 1)
+    status, body = call_api({"files": [{"name": "odd.csv", "content": content}],
+                             "callsign": "K2UA", "outputs": ["summary"]})
+    assert status == 400
+    assert "no column for sourcegrid" in body["message"]

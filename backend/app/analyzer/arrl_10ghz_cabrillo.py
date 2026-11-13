@@ -8,7 +8,7 @@ from data_source import (
     normalize_band, band_multiplier, band_to_cabrillo, TEN_GHZ_BANDS, file_safe_call,
 )
 
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 
 def grid_to_latlon(grid):
     """Convert 6-digit Maidenhead grid to lat/lon"""
